@@ -1,13 +1,13 @@
 # Project Status
 
 ## Current phase
-Phase 4 - Simulation Clock & Deterministic Event Loop
+Phase 5 - Strategy Interface + Queue Imbalance Demo
 
 ## Phase status
 PASS
 
 ## Last verified commit
-6c2e761
+19cbcc4
 
 ## Build
 - Debug: PASS
@@ -15,10 +15,10 @@ PASS
 - ASan/UBSan: PASS
 
 ## Tests
-- CTest: 5/5 passed
+- CTest: 6/6 passed
 - CLI smoke: PASS
 - Golden replay: PASS for Phase 3 order-book fixture
-- Determinism: PASS for Phase 4 deterministic trace, final simulation time, and final order-book hash
+- Determinism: PASS for Phase 5 callback trace, intent sequence, intent contents, and final order-book hash
 
 ## Benchmarks
 Not started
@@ -29,16 +29,45 @@ Not started
 - Phase 2 - PASS
 - Phase 3 - PASS
 - Phase 4 - PASS
+- Phase 5 - PASS
 
 ## Current work
-- Phase 4 completed. Stopped before Phase 5.
-- Implemented `SimulationClock` with monotonic `TimestampNs` advancement and explicit backwards-advance rejection.
-- Implemented deterministic single-threaded `InternalEventScheduler` with monotonic internal insertion sequence IDs.
-- Implemented `EventLoop` that merges Phase 2 historical market events with internal scheduled events using an explicit total ordering.
-- Added dispatch hooks for market/internal events and optional Phase 3 `OrderBook` application for `BookUpdateEvent`.
-- Added deterministic trace entries, canonical trace encoding, and FNV-1a 64-bit trace hashing.
-- Added Phase 4 tests for clock monotonicity, historical ordering, timestamp ties, market/internal interleaving, same-timestamp precedence, internal insertion order, past/current scheduling, empty/internal-only replay, book integration, trade dispatch, determinism, no-lookahead, end-of-stream with pending internals, single-event cases, and timestamp-limit edge behavior.
-- Documented Phase 4 behavior in `docs/event_loop.md`.
+- Phase 5 completed. Stopped before Phase 6.
+- Implemented a minimal `Strategy` interface with `on_book`, `on_trade`, and `on_timer` callbacks.
+- Implemented `OrderIntent`, `IntentSink`, `VectorIntentSink`, and `run_strategy` as a thin strategy layer over the Phase 4 event loop.
+- Implemented `QueueImbalanceStrategy` as a deterministic demo strategy using configurable top-N depth and thresholds.
+- Added strategy tests for callback order, post-update book visibility, read-only strategy signatures, no-lookahead, QI buy/sell/no-action behavior, top-N depth, zero/one-sided/locked/crossed policies, intent content, same-timestamp causality, timer callback, determinism, and strategy state-separation.
+- Documented Phase 5 behavior in `docs/strategy.md`.
+
+## Strategy callback semantics
+- `BookUpdateEvent`: event loop processes the event, applies the update to `OrderBook`, then invokes `Strategy::on_book`.
+- `TradeEvent`: event loop preserves source order, does not mutate the book, then invokes `Strategy::on_trade`.
+- `InternalEventType::Timer`: `Strategy::on_timer` is invoked for timer events only.
+- Callbacks occur once per relevant event in exact event-loop order; same-timestamp market events are not batched.
+- Strategy receives `const OrderBook&` and const market event data.
+
+## OrderIntent design
+- `OrderIntent` is a strategy-level decision record, not a Phase 6 order.
+- Fields: `side`, desired `quantity`, `order_type`, optional `limit_price_ticks`, and `decision_timestamp_ns`.
+- It has no order ID, exchange-arrival time, acknowledgement, status machine, fill quantity, cancel lifecycle, or execution state.
+
+## Queue Imbalance formula
+- `QI = (bid_volume - ask_volume) / (bid_volume + ask_volume)`.
+- Bid/ask volume is summed from configurable top-N visible depth.
+- If `QI > buy_threshold`, emit one Buy intent.
+- If `QI < sell_threshold`, emit one Sell intent.
+- Otherwise emit no intent.
+
+## QI numeric representation
+- Prices remain `PriceTicks`; quantities remain `Quantity`.
+- QI uses `double` only for the derived dimensionless ratio after integer volume summation.
+- QI floating-point values are not used for price representation, book keys, or canonical market state.
+
+## QI edge policies
+- Zero selected volume: emit no intent.
+- One-sided book: emit no intent.
+- Locked or crossed book: emit no intent.
+- Duplicate-signal behavior: evaluate on every `on_book` callback and emit at most one intent per callback when thresholds are crossed.
 
 ## Event ordering policy
 - Primary key: `timestamp_ns` ascending.
@@ -98,12 +127,12 @@ Not started
 ## Known limitations
 - `cmake` was not initially installed and was installed with Homebrew during Phase 0 verification.
 - CSV support is intentionally simple: comma-separated fields without quoted-field handling.
-- Phase 5 strategy interface is not implemented.
-- Internal event categories are generic scheduling payloads only; no order, cancel, fill, execution, or latency behavior is implemented.
-- No strategy, order lifecycle, fills, execution simulator, latency model, portfolio, benchmarking, Python bindings, multithreading, or performance optimization exists yet.
+- Phase 6 order lifecycle and market execution are not implemented.
+- `OrderIntent` generation alone does not affect replay state because execution does not exist yet.
+- No real orders, order IDs, acknowledgements, fills, execution simulator, latency execution, passive queue fills, portfolio, PnL, transaction fees, benchmarking, Python bindings, multithreading, or performance optimization exists yet.
 
 ## Next phase
-Phase 5 - Strategy Interface + Queue Imbalance Demo
+Phase 6 - Order Lifecycle + Market Execution
 
 ## Verification commands
 ```bash
@@ -111,10 +140,10 @@ $ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 Result: PASS - Debug build configured.
 
 $ cmake --build build
-Result: PASS - built market_replay, replay_cli, smoke_tests, domain_types_tests, market_feed_tests, order_book_tests, and event_loop_tests.
+Result: PASS - built market_replay, replay_cli, smoke_tests, domain_types_tests, market_feed_tests, order_book_tests, event_loop_tests, and strategy_tests.
 
 $ ctest --test-dir build --output-on-failure
-Result: PASS - 5/5 tests passed.
+Result: PASS - 6/6 tests passed.
 
 $ ./build/replay_cli --help
 Result: PASS - exited 0 and printed usage.
@@ -126,7 +155,7 @@ $ cmake --build build-asan
 Result: PASS - built sanitizer targets.
 
 $ ctest --test-dir build-asan --output-on-failure
-Result: PASS - 5/5 tests passed under ASan/UBSan configuration.
+Result: PASS - 6/6 tests passed under ASan/UBSan configuration.
 
 $ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 Result: PASS - Release build configured.
@@ -134,14 +163,20 @@ Result: PASS - Release build configured.
 $ cmake --build build-release
 Result: PASS - built Release targets.
 
-$ ./build/event_loop_tests
-Result: PASS - Phase 4 event-loop tests passed.
+$ ./build/strategy_tests
+Result: PASS - Phase 5 strategy tests passed.
 
-$ rg "std::chrono::system_clock|random_device|std::thread|std::mutex|std::atomic|async\(|unordered_" include src tests apps CMakeLists.txt
-Result: PASS - no wall-clock, randomness, thread, mutex, atomic, async, or unordered-container ordering source found.
+$ rg "#include .*execution_simulator|#include .*portfolio|#include .*fill" include src strategies tests/unit/strategy_test.cpp CMakeLists.txt
+Result: PASS - strategy code does not include future execution, fill, or portfolio headers.
+
+$ rg "class Order\b|order_id|filled_quantity|OrderStatus|Acknowledged|PartiallyFilled|execution_state|portfolio|PnL|pnl|fee" include/replay/strategy.hpp src/strategy.cpp strategies tests/unit/strategy_test.cpp
+Result: PASS - no Phase 6+ order lifecycle, execution, portfolio, PnL, or fee behavior in strategy implementation; only `market_feed` include text and a test message matched broader substrings.
+
+$ rg "std::thread|std::mutex|std::atomic|std::async|random_device|system_clock" include src strategies tests apps CMakeLists.txt
+Result: PASS - no threading, atomics, randomness, or wall-clock ordering introduced.
 
 $ git status --short
-Result: PASS - only Phase 4 files are modified/untracked; no staged changes.
+Result: PASS - only Phase 5 files are modified/untracked; no staged changes.
 
 $ git status --ignored --short
 Result: PASS - `PROJECT_SPEC.md` and build directories are ignored.
@@ -190,6 +225,13 @@ Result: PASS - no absolute user-machine paths found in public files.
 - deterministic trace test passes: PASS
 - no later phase logic embedded prematurely: PASS
 
+## Phase 5 acceptance gate
+- strategy interface cleanly separated: PASS
+- QI demo works: PASS
+- no direct order-book mutation: PASS
+- no future-event access: PASS
+- strategy behavior unit tested: PASS
+
 ## Privacy / Git hygiene
 - `PROJECT_SPEC.md` remains local-only and ignored: PASS
 - no private/local-only file staged: PASS
@@ -199,10 +241,10 @@ Result: PASS - no absolute user-machine paths found in public files.
 
 ## Files added/modified
 - `CMakeLists.txt`
-- `docs/event_loop.md`
-- `include/replay/event_loop.hpp`
-- `include/replay/simulation_clock.hpp`
+- `docs/strategy.md`
+- `include/replay/strategy.hpp`
 - `STATUS.md`
-- `src/event_loop.cpp`
-- `src/simulation_clock.cpp`
-- `tests/unit/event_loop_test.cpp`
+- `src/strategy.cpp`
+- `strategies/queue_imbalance_strategy.hpp`
+- `strategies/queue_imbalance_strategy.cpp`
+- `tests/unit/strategy_test.cpp`

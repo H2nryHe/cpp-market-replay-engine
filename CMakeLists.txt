@@ -20,6 +20,8 @@ add_library(market_replay
   src/market_feed.cpp
   src/order_book.cpp
   src/simulation_clock.cpp
+  src/strategy.cpp
+  strategies/queue_imbalance_strategy.cpp
   src/types.cpp
   src/version.cpp
 )
@@ -29,6 +31,7 @@ add_library(market_replay::market_replay ALIAS market_replay)
 target_include_directories(market_replay
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/strategies
 )
 
 target_compile_features(market_replay PUBLIC cxx_std_20)
@@ -118,4 +121,15 @@ if(BUILD_TESTING)
 
   add_test(NAME event_loop_tests COMMAND event_loop_tests)
   set_tests_properties(event_loop_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(strategy_tests
+    tests/unit/strategy_test.cpp
+  )
+
+  target_link_libraries(strategy_tests PRIVATE market_replay::market_replay)
+  replay_apply_warnings(strategy_tests)
+  replay_apply_sanitizers(strategy_tests)
+
+  add_test(NAME strategy_tests COMMAND strategy_tests)
+  set_tests_properties(strategy_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
