@@ -1,0 +1,4 @@
+timestamp_ns,sequence_id,side,price,quantity
+1000,1,buy,100.25,5
+1000,2,S,100.30,0
+2000,3,B,100.20,10

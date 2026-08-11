@@ -1,6 +1,7 @@
 #include "replay/types.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <limits>
 #include <stdexcept>
 
@@ -120,6 +121,30 @@ Decimal parse_tick_size(std::string_view tick_size) {
   return parsed;
 }
 
+std::int64_t parse_non_negative_int64(std::string_view text, std::string_view field_name) {
+  if (text.empty()) {
+    throw std::invalid_argument(std::string{field_name} + " must not be empty");
+  }
+  if (text.front() == '-') {
+    throw std::invalid_argument(std::string{field_name} + " must be non-negative");
+  }
+  if (text.front() == '+') {
+    throw std::invalid_argument(std::string{field_name} + " must not include an explicit sign");
+  }
+
+  std::int64_t value = 0;
+  const auto* const begin = text.data();
+  const auto* const end = begin + text.size();
+  const auto result = std::from_chars(begin, end, value);
+  if (result.ec == std::errc::result_out_of_range) {
+    throw std::out_of_range(std::string{field_name} + " is too large");
+  }
+  if (result.ec != std::errc{} || result.ptr != end) {
+    throw std::invalid_argument(std::string{field_name} + " must be a non-negative integer");
+  }
+  return value;
+}
+
 }  // namespace
 
 LatencyNs LatencyNs::from_nanoseconds(std::int64_t latency_ns) {
@@ -217,6 +242,18 @@ std::string ticks_to_price(PriceTicks price_ticks, std::string_view tick_size) {
       static_cast<unsigned __int128>(unsigned_ticks) * static_cast<unsigned __int128>(tick.coefficient);
   const auto coefficient = checked_to_uint64(scaled_price, "decimal_price");
   return format_scaled_decimal(coefficient, tick.scale);
+}
+
+PriceTicks parse_price_ticks(std::string_view text) {
+  const auto value = parse_non_negative_int64(text, "price_ticks");
+  validate_price_ticks(value);
+  return value;
+}
+
+Quantity parse_quantity(std::string_view text) {
+  const auto value = parse_non_negative_int64(text, "quantity");
+  validate_quantity(value);
+  return value;
 }
 
 void validate_price_ticks(PriceTicks price_ticks) {

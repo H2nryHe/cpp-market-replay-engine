@@ -16,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CTest)
 
 add_library(market_replay
+  src/market_feed.cpp
   src/types.cpp
   src/version.cpp
 )
@@ -81,4 +82,15 @@ if(BUILD_TESTING)
   replay_apply_sanitizers(domain_types_tests)
 
   add_test(NAME domain_types_tests COMMAND domain_types_tests)
+
+  add_executable(market_feed_tests
+    tests/unit/market_feed_test.cpp
+  )
+
+  target_link_libraries(market_feed_tests PRIVATE market_replay::market_replay)
+  replay_apply_warnings(market_feed_tests)
+  replay_apply_sanitizers(market_feed_tests)
+
+  add_test(NAME market_feed_tests COMMAND market_feed_tests)
+  set_tests_properties(market_feed_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

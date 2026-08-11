@@ -43,6 +43,8 @@ void test_price_conversion() {
   expect_true(replay::ticks_to_price(10025, "0.01") == "100.25", "10025 ticks formats as 100.25");
   expect_true(replay::ticks_to_price(10000, "0.01") == "100.00", "10000 ticks preserves tick precision");
   expect_true(replay::ticks_to_price(3, "0.0005") == "0.0015", "fractional tick formatting works");
+  expect_true(replay::parse_price_ticks("10025") == 10025, "canonical price tick parser accepts integer text");
+  expect_true(replay::parse_quantity("5") == 5, "canonical quantity parser accepts integer text");
 }
 
 void test_invalid_price_conversion() {
@@ -64,6 +66,12 @@ void test_invalid_price_conversion() {
   expect_throws<std::invalid_argument>(
       [] { static_cast<void>(replay::ticks_to_price(-1, "0.01")); },
       "negative price ticks are rejected");
+  expect_throws<std::invalid_argument>(
+      [] { static_cast<void>(replay::parse_price_ticks("+1")); },
+      "explicitly signed price ticks are rejected");
+  expect_throws<std::invalid_argument>(
+      [] { static_cast<void>(replay::parse_quantity("1.5")); },
+      "fractional quantity is rejected");
 }
 
 void test_side_parsing() {

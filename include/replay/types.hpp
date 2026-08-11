@@ -57,6 +57,9 @@ OrderStatus parse_order_status(std::string_view text);
 PriceTicks price_to_ticks(std::string_view decimal_price, std::string_view tick_size);
 std::string ticks_to_price(PriceTicks price_ticks, std::string_view tick_size);
 
+PriceTicks parse_price_ticks(std::string_view text);
+Quantity parse_quantity(std::string_view text);
+
 void validate_price_ticks(PriceTicks price_ticks);
 void validate_quantity(Quantity quantity);
 void validate_tick_size(std::string_view tick_size);
