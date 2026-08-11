@@ -158,4 +158,15 @@ if(BUILD_TESTING)
 
   add_test(NAME latency_execution_tests COMMAND latency_execution_tests)
   set_tests_properties(latency_execution_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(passive_limit_tests
+    tests/unit/passive_limit_execution_test.cpp
+  )
+
+  target_link_libraries(passive_limit_tests PRIVATE market_replay::market_replay)
+  replay_apply_warnings(passive_limit_tests)
+  replay_apply_sanitizers(passive_limit_tests)
+
+  add_test(NAME passive_limit_tests COMMAND passive_limit_tests)
+  set_tests_properties(passive_limit_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

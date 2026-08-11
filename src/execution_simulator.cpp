@@ -188,18 +188,30 @@ const ExecutionConfig& ExecutionSimulator::config() const noexcept {
   return config_;
 }
 
-Fill ExecutionSimulator::make_fill(const Order& order, PriceTicks price_ticks, Quantity quantity) {
+Fill ExecutionSimulator::create_fill(const Order& order,
+                                     PriceTicks price_ticks,
+                                     Quantity quantity,
+                                     TimestampNs fill_timestamp_ns) {
+  validate_price_ticks(price_ticks);
+  validate_quantity(quantity);
+  if (quantity <= 0) {
+    throw std::invalid_argument("fill quantity must be greater than zero");
+  }
   const Fill fill{
       .order_id = order.order_id(),
       .side = order.side(),
       .price_ticks = price_ticks,
       .quantity = quantity,
-      .fill_timestamp_ns = order.exchange_arrival_timestamp_ns(),
+      .fill_timestamp_ns = fill_timestamp_ns,
       .fill_sequence_id = next_fill_sequence_id_,
       .fee_amount = config_.fee_model.calculate_fee(price_ticks, quantity),
   };
   ++next_fill_sequence_id_;
   return fill;
+}
+
+Fill ExecutionSimulator::make_fill(const Order& order, PriceTicks price_ticks, Quantity quantity) {
+  return create_fill(order, price_ticks, quantity, order.exchange_arrival_timestamp_ns());
 }
 
 TimestampNs checked_add_latency(TimestampNs submit_timestamp_ns, LatencyNs latency) {

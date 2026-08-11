@@ -76,6 +76,7 @@ class ExecutionSimulator {
   ExecutionResult execute_market_order(Order order, const OrderBook& book);
 
   [[nodiscard]] const ExecutionConfig& config() const noexcept;
+  Fill create_fill(const Order& order, PriceTicks price_ticks, Quantity quantity, TimestampNs fill_timestamp_ns);
 
  private:
   Fill make_fill(const Order& order, PriceTicks price_ticks, Quantity quantity);

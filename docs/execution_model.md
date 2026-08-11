@@ -1,8 +1,8 @@
 # Execution Model
 
-Phase 6 added execution-domain orders, fills, market execution, and deterministic fees. Phase 7 integrates market-order execution with the deterministic event scheduler so strategy decisions become pending orders and execute only at exchange arrival time.
+Phase 6 added execution-domain orders, fills, market execution, and deterministic fees. Phase 7 integrated market-order execution with the deterministic event scheduler so strategy decisions become pending orders and execute only at exchange arrival time. Phase 8 adds marketable limit orders, resting simulated limit orders, deterministic cancels, partial passive fills, and an explicit L2 queue-depth approximation.
 
-This phase does not implement resting passive limit orders, cancel requests, cancellation latency or races, passive fills, portfolio accounting, PnL, market impact, benchmarking, Python bindings, or multithreading.
+This phase does not implement portfolio accounting, PnL, exact FIFO/L3 queue reconstruction, exchange matching-engine emulation, market impact, hidden-liquidity modeling, stochastic fills, benchmark optimization, Python bindings, or multithreading.
 
 ## OrderIntent vs Order
 
@@ -52,7 +52,7 @@ Latency-aware execution uses the Phase 4 `EventLoop` internal scheduler. Submitt
 
 The order registry owns order state. The scheduled internal event carries only the order ID and a deterministic label; it does not carry an `OrderBook` snapshot or a future execution result.
 
-At `OrderArrival`, execution reads the current historical `OrderBook` and then applies the Phase 6 market-order sweep rules.
+At `OrderArrival`, execution reads the current historical `OrderBook` and then applies the market or limit arrival rules. Cancel requests also use the Phase 4 scheduler and arrive as `InternalEventType::CancelArrival`; there is no separate asynchronous cancellation system.
 
 ## Zero-Latency Semantics
 
@@ -98,7 +98,7 @@ Market-order outcomes use these policies:
 
 During latency, an order remains `Pending` with zero filled quantity. No fill can occur before the `OrderArrival` internal event.
 
-For partial market execution, `Canceled` means only the unfilled remainder was canceled after the arrival-time sweep. Existing fills remain valid. A market-order remainder never becomes a resting order in Phase 7.
+For partial market execution, `Canceled` means only the unfilled remainder was canceled after the arrival-time sweep. Existing fills remain valid. A market-order remainder never becomes a resting order.
 
 ## Market-Order Sweep Rules
 
@@ -125,6 +125,8 @@ Market impact is not modeled.
 ```
 
 Because market impact is not modeled, multiple simulated market orders at the same arrival time may observe the same historical visible liquidity. The simulator does not secretly reduce historical depth to make simulated orders compete.
+
+Resting simulated limit orders are stored in a separate execution-layer active-order registry. They are not inserted into the historical bid or ask maps. Simulated fills and cancels do not reduce, delete, or otherwise rewrite historical levels.
 
 ## Fill Records
 
@@ -154,7 +156,7 @@ Overfills and negative quantities are rejected explicitly.
 
 ## Fee Model
 
-Phase 6 uses one taker-style fixed-point fee rate represented in parts per million. Valid rates are in `[0, 1,000,000]`.
+The fee model uses one fixed-point rate represented in parts per million. Valid rates are in `[0, 1,000,000]`.
 
 ```text
 fee_rate_ppm = 100 means 100 / 1,000,000
@@ -174,22 +176,110 @@ fee_amount = round_half_up(notional_tick_quantity * fee_rate_ppm / 1,000,000)
 
 `fee_amount` is stored as integer `FeeAmount` in the same tick-quantity notional unit. The calculation uses integer arithmetic with checked intermediate range; no hidden floating-point rounding is used.
 
-## Limit-Order Policy
+Maker/taker fee differentiation is not modeled in Phase 8; aggressive and passive fills use the same deterministic fee model.
 
-`OrderType::Limit` is represented structurally for future compatibility. Phase 7 does not implement marketable limit execution, resting orders, cancels, passive queue fills, or queue-ahead modeling.
+## Limit-Order Arrival
 
-Submitting a limit order to `ExecutionSimulator::execute_order` produces:
+Limit orders arrive through the same latency-aware scheduler as market orders.
+
+Buy limit arrival:
+
+- if `best_ask <= limit_price`, sweep asks from lowest upward;
+- never execute above the limit price;
+- any unfilled remainder rests as a simulated active buy limit at the limit price.
+
+Sell limit arrival:
+
+- if `best_bid >= limit_price`, sweep bids from highest downward;
+- never execute below the limit price;
+- any unfilled remainder rests as a simulated active sell limit at the limit price.
+
+If no aggressive fill occurs, `Acknowledged` represents an active resting order. If an aggressive fill leaves a remainder, `PartiallyFilled` represents an active resting order. `Filled`, `Canceled`, and `Rejected` are terminal.
+
+`ExecutionSimulator::execute_order` remains the Phase 6 direct market-order API; latency-aware limit behavior lives in `LatencyAwareExecution`.
+
+## Active-Order Registry
+
+The active registry stores simulated resting limit orders separately from historical book state. Each active record contains:
+
+- `OrderId`;
+- side;
+- limit price;
+- queue-ahead quantity;
+- exchange-arrival timestamp.
+
+The authoritative `Order` record retains original quantity, filled quantity, remaining quantity, status, timestamps, and limit price. Active orders are processed deterministically by registry order, which follows our own order ID / arrival order. This deterministic ordering is only among our simulated orders; it is not a claim about true exchange FIFO position against historical participants.
+
+## Queue Fraction
+
+Phase 8 represents queue fraction as fixed-point parts per million:
 
 ```text
-New -> Pending -> Rejected
+queue_fraction_ppm in [0, 1,000,000]
+250000  = 0.25
+500000  = 0.50
+750000  = 0.75
+1000000 = 1.00
 ```
 
-No fills are generated. This explicit rejection prevents accidental treatment of limits as market orders before Phase 8.
+At order arrival, a newly resting order initializes:
+
+```text
+queue_ahead = round_half_up(visible_quantity_at_limit_price * queue_fraction_ppm / 1,000,000)
+```
+
+If no historical visible quantity exists at the limit price, `queue_ahead = 0`. This does not mean an immediate fill occurs; a qualifying future trade is still required.
+
+For a marketable limit order that aggressively consumed visible quantity at its own limit price and still has a remainder, the remainder rests with `queue_ahead = 0` because the model already swept that visible limit-price quantity.
+
+## Passive Fill Model
+
+Passive fills from L2 data are queue-depth approximations rather than exact FIFO/L3 order reconstruction.
+
+Only qualifying reported `TradeEvent` volume may reduce `queue_ahead` or generate passive fills. `BookUpdateEvent` size reductions, quote moves, level deletions, spread changes, and displayed quantity changes do not consume queue and do not fill simulated resting orders.
+
+Exact-price qualifying trades:
+
+- resting Buy limit at `P`: `aggressor_side == Sell` and `trade.price_ticks == P`;
+- resting Sell limit at `P`: `aggressor_side == Buy` and `trade.price_ticks == P`.
+
+Unknown aggressor side is conservative: no queue reduction and no passive fill.
+
+Trade-through approximation:
+
+- resting Buy at `P`: a Sell-aggressor trade below `P` sets queue ahead to zero and may fill at `P`;
+- resting Sell at `P`: a Buy-aggressor trade above `P` sets queue ahead to zero and may fill at `P`.
+
+Passive fill price is always the simulated order's limit price. Passive fill timestamp is the qualifying trade timestamp. No arbitrary price improvement is modeled.
+
+For each historical trade, active simulated orders at the same side/price consume the trade quantity sequentially in deterministic order. The total passive fill quantity caused by that trade cannot exceed the trade's reported quantity after modeled queue-ahead consumption; reported trade volume is not duplicated across our own active orders.
+
+## Cancellation
+
+Cancel requests schedule `InternalEventType::CancelArrival` through the Phase 4 scheduler. Phase 8 uses zero cancel latency by default, with the same `TimestampNs`/`LatencyNs` checked arithmetic available when a cancel latency is supplied.
+
+Only active resting limit orders can be canceled:
+
+- `Acknowledged -> Canceled`;
+- `PartiallyFilled -> Canceled`.
+
+A canceled order keeps prior fills and filled quantity, is removed from active processing, and receives no future passive fills. Canceling `Filled`, `Canceled`, or `Rejected` orders fails explicitly.
+
+Same-timestamp race semantics preserve Phase 4 ordering:
+
+- `TradeEvent @ T` before `CancelArrival @ T`: the trade may fill the order before cancellation;
+- `TradeEvent @ T` before `OrderArrival @ T`: the newly arriving order cannot receive passive fill from that earlier same-timestamp trade.
 
 ## Current Limitations
 
-- No resting order book for simulated orders.
-- No cancel request handling.
-- No passive limit fills or L2 queue approximation.
+- L2 cannot identify exact FIFO position.
+- Queue position is approximated from visible depth.
+- Book-size reductions are not assumed to be executions.
+- Unknown-aggressor trades do not trigger passive fills.
+- Historical `OrderBook` remains zero-impact and immutable to simulated orders.
+- Hidden and iceberg liquidity are not modeled.
+- Exchange-specific matching rules are not modeled.
+- Maker/taker fee differentiation is not modeled.
+- Our simulated orders are ordered deterministically among themselves, but this does not imply true historical exchange FIFO position.
 - No portfolio, inventory, cash, PnL, fees-to-accounting, or equity logic.
 - No market impact.
