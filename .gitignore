@@ -18,3 +18,4 @@ compile_commands.json
 .DS_Store
 artifacts/*
 !artifacts/.gitkeep
+PROJECT_SPEC.md

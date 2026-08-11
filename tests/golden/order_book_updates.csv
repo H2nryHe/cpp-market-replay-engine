@@ -1,0 +1,13 @@
+timestamp_ns,sequence_id,side,price,quantity
+1,1,buy,10000,5
+2,2,buy,9999,3
+3,3,sell,10001,4
+4,4,sell,10002,8
+5,5,buy,10000,7
+6,6,sell,10003,6
+7,7,buy,9998,9
+8,8,sell,10001,0
+9,9,sell,10004,2
+10,10,buy,9999,0
+11,11,buy,10005,1
+12,12,sell,10004,0

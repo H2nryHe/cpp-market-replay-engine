@@ -17,6 +17,7 @@ include(CTest)
 
 add_library(market_replay
   src/market_feed.cpp
+  src/order_book.cpp
   src/types.cpp
   src/version.cpp
 )
@@ -93,4 +94,15 @@ if(BUILD_TESTING)
 
   add_test(NAME market_feed_tests COMMAND market_feed_tests)
   set_tests_properties(market_feed_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(order_book_tests
+    tests/unit/order_book_test.cpp
+  )
+
+  target_link_libraries(order_book_tests PRIVATE market_replay::market_replay)
+  replay_apply_warnings(order_book_tests)
+  replay_apply_sanitizers(order_book_tests)
+
+  add_test(NAME order_book_tests COMMAND order_book_tests)
+  set_tests_properties(order_book_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
