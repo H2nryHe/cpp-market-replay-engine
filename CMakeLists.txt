@@ -16,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CTest)
 
 add_library(market_replay
+  src/types.cpp
   src/version.cpp
 )
 
@@ -70,4 +71,14 @@ if(BUILD_TESTING)
   replay_apply_sanitizers(smoke_tests)
 
   add_test(NAME smoke_tests COMMAND smoke_tests)
+
+  add_executable(domain_types_tests
+    tests/unit/domain_types_test.cpp
+  )
+
+  target_link_libraries(domain_types_tests PRIVATE market_replay::market_replay)
+  replay_apply_warnings(domain_types_tests)
+  replay_apply_sanitizers(domain_types_tests)
+
+  add_test(NAME domain_types_tests COMMAND domain_types_tests)
 endif()

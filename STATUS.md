@@ -1,7 +1,7 @@
 # Project Status
 
 ## Current phase
-Phase 0 - Repository Bootstrap
+Phase 1 - Core Domain Types
 
 ## Phase status
 PASS
@@ -15,38 +15,44 @@ Not available - workspace is not currently a Git repository.
 - ASan/UBSan: PASS
 
 ## Tests
-- CTest: 1/1 passed
+- CTest: 2/2 passed
 - CLI smoke: PASS
 - Golden replay: Not started
-- Determinism: Not started
+- Determinism: PASS for Phase 1 EventKey ordering
 
 ## Benchmarks
 Not started
 
 ## Completed phases
 - Phase 0 - PASS
+- Phase 1 - PASS
 
 ## Current work
-- Phase 0 completed. Stopped before Phase 1.
+- Phase 1 completed. Stopped before Phase 2.
+- Implemented strongly typed domain primitives: `TimestampNs`, `PriceTicks`, `Quantity`, `Side`, `OrderType`, `OrderStatus`, `EventKey`, and `LatencyNs`.
+- Implemented deterministic decimal-string price/tick conversion with explicit no-rounding behavior.
+- Implemented validation helpers and parser functions that reject invalid values explicitly.
+- Documented Phase 1 units, price conversion rules, enum aliases, and EventKey ordering in `docs/domain_types.md`.
 
 ## Known limitations
-- Phase 1 domain primitives are not implemented yet.
 - The workspace has no Git metadata, so commit tracking is unavailable.
 - `cmake` was not initially installed and was installed with Homebrew during Phase 0 verification.
+- Phase 2 market feed/parser is not implemented.
+- No order book, replay loop, strategy, execution simulator, or portfolio exists yet.
 
 ## Next phase
-Phase 1 - Core Domain Types
+Phase 2 - Market Feed & Normalized Parser
 
 ## Verification commands
 ```bash
 $ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-Result: PASS - configured with AppleClang 21.0.0.21000101.
+Result: PASS - Debug build configured.
 
 $ cmake --build build
-Result: PASS - built market_replay, replay_cli, and smoke_tests.
+Result: PASS - built market_replay, replay_cli, smoke_tests, and domain_types_tests.
 
 $ ctest --test-dir build --output-on-failure
-Result: PASS - 1/1 tests passed.
+Result: PASS - 2/2 tests passed.
 
 $ ./build/replay_cli --help
 Result: PASS - exited 0 and printed usage.
@@ -58,13 +64,16 @@ $ cmake --build build-asan
 Result: PASS - built sanitizer targets.
 
 $ ctest --test-dir build-asan --output-on-failure
-Result: PASS - 1/1 tests passed under ASan/UBSan configuration.
+Result: PASS - 2/2 tests passed under ASan/UBSan configuration.
 
 $ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 Result: PASS - Release build configured.
 
 $ cmake --build build-release
 Result: PASS - built Release targets.
+
+$ rg "\bdouble\b|std::map|std::unordered_map" include src tests apps docs CMakeLists.txt
+Result: PASS - no matches; no order-book price-key containers exist in Phase 1.
 ```
 
 ## Phase 0 acceptance gate
@@ -75,25 +84,17 @@ Result: PASS - built Release targets.
 - sanitizer build works where supported: PASS
 - `STATUS.md` records exact commands/results: PASS
 
+## Phase 1 acceptance gate
+- no market price key uses `double`: PASS
+- event ordering has deterministic tests: PASS
+- conversion rules documented: PASS
+- all unit tests pass: PASS
+- sanitizer tests pass: PASS
+
 ## Files added/modified
-- `.gitignore`
 - `CMakeLists.txt`
-- `LICENSE`
-- `PROJECT_SPEC.md`
-- `README.md`
+- `docs/domain_types.md`
+- `include/replay/types.hpp`
 - `STATUS.md`
-- `apps/replay_cli.cpp`
-- `artifacts/.gitkeep`
-- `benchmarks/.gitkeep`
-- `cmake/.gitkeep`
-- `configs/.gitkeep`
-- `docs/.gitkeep`
-- `examples/.gitkeep`
-- `include/replay/version.hpp`
-- `python/.gitkeep`
-- `src/version.cpp`
-- `strategies/.gitkeep`
-- `tests/fixtures/.gitkeep`
-- `tests/golden/.gitkeep`
-- `tests/integration/.gitkeep`
-- `tests/unit/smoke_test.cpp`
+- `src/types.cpp`
+- `tests/unit/domain_types_test.cpp`
