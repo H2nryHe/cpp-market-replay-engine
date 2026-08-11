@@ -24,6 +24,7 @@ class Order {
   [[nodiscard]] Quantity original_quantity() const noexcept;
   [[nodiscard]] Quantity filled_quantity() const noexcept;
   [[nodiscard]] Quantity remaining_quantity() const noexcept;
+  [[nodiscard]] TimestampNs decision_timestamp_ns() const noexcept;
   [[nodiscard]] TimestampNs submit_timestamp_ns() const noexcept;
   [[nodiscard]] TimestampNs exchange_arrival_timestamp_ns() const noexcept;
   [[nodiscard]] std::optional<PriceTicks> limit_price_ticks() const noexcept;
@@ -39,6 +40,7 @@ class Order {
   OrderType order_type_{OrderType::Market};
   Quantity original_quantity_{};
   Quantity filled_quantity_{};
+  TimestampNs decision_timestamp_ns_{};
   TimestampNs submit_timestamp_ns_{};
   TimestampNs exchange_arrival_timestamp_ns_{};
   std::optional<PriceTicks> limit_price_ticks_{};

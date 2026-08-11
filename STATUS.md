@@ -1,7 +1,7 @@
 # Project Status
 
 ## Current phase
-Phase 6 - Order Lifecycle + Market Execution
+Phase 7 - Latency-Aware Execution
 
 ## Phase status
 PASS
@@ -15,10 +15,10 @@ PASS
 - ASan/UBSan: PASS
 
 ## Tests
-- CTest: 7/7 passed
+- CTest: 8/8 passed
 - CLI smoke: PASS
 - Golden replay: PASS for Phase 3 order-book fixture
-- Determinism: PASS for Phase 6 order IDs, lifecycle outcomes, fill sequence, fill prices, fill quantities, fee values, and unchanged historical order-book hash
+- Determinism: PASS for Phase 7 order IDs, arrival-event trace, lifecycle outcomes, fill sequence, fill prices, fill quantities, fees, and final order-book hash
 
 ## Benchmarks
 Not started
@@ -31,16 +31,58 @@ Not started
 - Phase 4 - PASS
 - Phase 5 - PASS
 - Phase 6 - PASS
+- Phase 7 - PASS
 
 ## Current work
-- Phase 6 completed. Stopped before Phase 7.
-- Implemented execution-domain `Order` with deterministic `OrderId`, submit timestamp, immediate exchange-arrival timestamp, side, type, original quantity, filled quantity, computed remaining quantity, optional limit price, current status, and status history.
-- Implemented validated lifecycle transitions through `Order::transition_to`; invalid transitions throw explicitly.
-- Implemented `Fill` records with order ID, side, price ticks, quantity, fill timestamp, deterministic fill sequence ID, and integer fee amount.
-- Implemented `OrderFactory` and `ExecutionSimulator` with zero-latency market-order execution against read-only visible L2 depth.
-- Implemented deterministic fixed-point `FeeModel` using `fee_rate_ppm`.
-- Added Phase 6 execution tests covering required cases A-S, including one-level fills, multi-level sweeps, insufficient liquidity, empty/one-sided books, historical book immutability, fill conservation, no-overfill, exact fees, per-fill multi-fill fees, limit rejection, intent conversion, and 100-run determinism.
-- Documented Phase 6 behavior in `docs/execution_model.md`.
+- Phase 7 completed. Stopped before Phase 8.
+- Added latency-aware execution integration over the Phase 4 `EventLoop` internal scheduler.
+- Added `LatencyAwareExecution`, `LatencyExecutionConfig`, `OrderSubmissionRecord`, and `run_latency_aware_strategy`.
+- Strategy `OrderIntent` objects are converted into execution-domain `Order` objects, transitioned to `Pending`, stored in a deterministic owner, and scheduled as `InternalEventType::OrderArrival`.
+- Order arrival events carry only deterministic order ID metadata; no copied book snapshot or future execution result is stored in the scheduled event.
+- Execution happens only when the `OrderArrival` internal event is processed and reads the current historical `OrderBook`.
+- Added overflow-checked `checked_add_latency`.
+- Added explicit decision timestamp accessor on `Order`; current decision and submit timestamps are equal.
+- Added synthetic latency fixture where latency changes the execution price.
+- Added Phase 7 tests for required cases A-R.
+- Updated `docs/execution_model.md` for Phase 7 timing and scheduler semantics.
+
+## Timing semantics
+- Decision time: when a strategy emits `OrderIntent`.
+- Submit time: when the simulator accepts the intent and creates an `Order`.
+- Exchange arrival time: `submit_timestamp_ns + configured_latency.count`.
+- Decision time and submit time are currently equal.
+- Exchange arrival uses `TimestampNs` and `LatencyNs`; no wall-clock time is used.
+- Negative user latency is rejected through `LatencyNs` construction helpers.
+- Timestamp plus latency overflow throws `std::overflow_error`.
+
+## Lifecycle changes
+- Submitted orders transition `New -> Pending` immediately at strategy callback time.
+- During latency, the order remains `Pending`, has `filled_quantity == 0`, and has no fills.
+- At `OrderArrival`, market execution transitions from `Pending` to `Acknowledged`, then to the Phase 6 terminal status.
+- Full fill: `New -> Pending -> Acknowledged -> Filled`.
+- Partial fill with insufficient liquidity: `New -> Pending -> Acknowledged -> PartiallyFilled -> Canceled`.
+- No executable liquidity at arrival: `New -> Pending -> Rejected`.
+- Duplicate arrival dispatch for the same order is rejected explicitly because the order is no longer pending.
+
+## Zero-latency semantics
+- A latency of zero schedules `OrderArrival` at the current simulation timestamp.
+- Zero latency does not execute inline inside a strategy callback.
+- Historical market events at the same timestamp still precede internal events, preserving Phase 4 ordering.
+- Same-timestamp test coverage verifies that a zero-latency order submitted after `t=100 seq1` executes only after later `t=100` market events have processed.
+
+## Same-timestamp ordering
+- Market events at timestamp `T` precede `OrderArrival` internal events at timestamp `T`.
+- Multiple `OrderArrival` events with identical timestamps are processed in Phase 4 internal insertion order.
+- Multiple pending market orders do not mutate historical depth; under zero market impact they may observe the same historical visible liquidity.
+
+## End-of-feed behavior
+- The event loop continues processing internal events after historical feed exhaustion.
+- A pending order whose arrival time is after the final market event executes against the final historical `OrderBook` state.
+
+## Zero-impact book policy
+- Simulated execution reads historical visible liquidity but does not mutate the authoritative historical `OrderBook`.
+- No execution-local shared liquidity model was added in Phase 7.
+- Market impact is not modeled.
 
 ## Order lifecycle transition policy
 - Allowed transitions:
@@ -53,92 +95,42 @@ Not started
   - `PartiallyFilled -> Filled`
   - `PartiallyFilled -> Canceled`
 - Terminal states `Filled`, `Canceled`, and `Rejected` have no outgoing transitions.
-- Invalid transitions such as `Filled -> Pending`, `Canceled -> Filled`, and `Rejected -> Filled` throw `std::invalid_argument`.
-- Full immediate market fill: `New -> Pending -> Acknowledged -> Filled`.
-- Partial immediate market fill with insufficient liquidity: `New -> Pending -> Acknowledged -> PartiallyFilled -> Canceled`.
-- Zero executable liquidity: `New -> Pending -> Rejected`.
-
-## Insufficient-liquidity policy
-- Market orders sweep currently visible opposite-side L2 depth in price priority.
-- If visible liquidity is insufficient, fills are kept, `remaining_quantity` is preserved, and the unfilled market-order remainder is canceled.
-- A market-order remainder does not become a resting order in Phase 6.
+- Invalid transitions throw `std::invalid_argument`.
 
 ## Fill model
 - Fill sequence IDs are simulator-local monotonic integers.
 - Buy market orders fill asks from lowest to higher price.
 - Sell market orders fill bids from highest to lower price.
-- Fill timestamps equal the order exchange-arrival timestamp; in Phase 6 this equals submit timestamp.
+- Fill timestamps equal the order exchange-arrival timestamp.
 - Fill price is `PriceTicks`; no floating-point price is stored in canonical fill or order state.
-- Conservation invariant: `sum(fill.quantity for order) == order.filled_quantity`, and `filled_quantity + remaining_quantity == original_quantity`.
 
 ## Fee representation / rounding
 - Fee rate is a fixed-point integer in parts per million: `fee_rate_ppm`.
 - Valid fee rates are `[0, 1,000,000]`.
 - Canonical notional unit is `price_ticks * quantity`.
 - Fees are calculated per fill as `round_half_up(notional_tick_quantity * fee_rate_ppm / 1,000,000)`.
-- Fee calculations use integer arithmetic with checked intermediate range; no hidden floating-point rounding is used.
+- Fee calculations use integer arithmetic with checked intermediate range.
 
-## Zero-impact book-immutability policy
-- Simulated execution reads historical visible liquidity but does not mutate the authoritative historical `OrderBook`.
-- Execution uses read-only depth snapshots; historical levels and canonical book hash remain unchanged after simulated fills.
-- Market impact is not modeled.
-
-## Limit behavior in Phase 6
-- `OrderType::Limit` is represented structurally for future compatibility.
-- Phase 6 rejects limit execution explicitly as `New -> Pending -> Rejected`.
-- No marketable limit execution, resting limit order, cancel handling, passive queue fill, or queue-ahead model is implemented.
-
-## Strategy callback semantics
-- `BookUpdateEvent`: event loop processes the event, applies the update to `OrderBook`, then invokes `Strategy::on_book`.
-- `TradeEvent`: event loop preserves source order, does not mutate the book, then invokes `Strategy::on_trade`.
-- `InternalEventType::Timer`: `Strategy::on_timer` is invoked for timer events only.
-- Callbacks occur once per relevant event in exact event-loop order; same-timestamp market events are not batched.
-- Strategy receives `const OrderBook&` and const market event data.
-
-## OrderIntent design
-- `OrderIntent` is a strategy-level decision record, not an execution-domain order.
-- Fields: `side`, desired `quantity`, `order_type`, optional `limit_price_ticks`, and `decision_timestamp_ns`.
-- It has no order ID, exchange-arrival time, acknowledgement, status machine, fill quantity, cancel lifecycle, or execution state.
-- Phase 6 conversion through `OrderFactory` creates an `Order`; no fills exist until execution is invoked.
-
-## Queue Imbalance formula
-- `QI = (bid_volume - ask_volume) / (bid_volume + ask_volume)`.
-- Bid/ask volume is summed from configurable top-N visible depth.
-- If `QI > buy_threshold`, emit one Buy intent.
-- If `QI < sell_threshold`, emit one Sell intent.
-- Otherwise emit no intent.
-
-## QI numeric representation
-- Prices remain `PriceTicks`; quantities remain `Quantity`.
-- QI uses `double` only for the derived dimensionless ratio after integer volume summation.
-- QI floating-point values are not used for price representation, book keys, or canonical market state.
+## Limit behavior
+- `OrderType::Limit` remains structurally represented for future compatibility.
+- Phase 7 still rejects limit execution explicitly as `New -> Pending -> Rejected`.
+- No marketable limit execution, resting order, cancel handling, passive queue fill, or queue-ahead model is implemented.
 
 ## Event ordering policy
 - Primary key: `timestamp_ns` ascending.
 - At the same timestamp, historical market events are processed before internal scheduled events.
-- Among historical market events, Phase 2 source order and `EventKey` ordering are preserved; the event loop does not silently sort or repair market data.
+- Among historical market events, Phase 2 source order and `EventKey` ordering are preserved.
 - Among internal events at the same timestamp, deterministic insertion order is preserved by `internal_sequence_id`.
-
-## Book data structure
-- Bids: `std::map<PriceTicks, Quantity, std::greater<PriceTicks>>`, best to worst.
-- Asks: `std::map<PriceTicks, Quantity, std::less<PriceTicks>>`, best to worst.
-- `BookUpdateEvent.quantity` is treated as resulting visible quantity, not an additive delta.
-
-## Canonical hash method
-- `canonical_state()` encodes bids best-to-worst, then asks best-to-worst, as `B,<price_ticks>,<quantity>\n` and `A,<price_ticks>,<quantity>\n`.
-- `state_hash()` applies FNV-1a 64-bit with offset basis `14695981039346656037` and prime `1099511628211`.
-- The hash is a deterministic regression checksum, not a cryptographic claim.
 
 ## Known limitations
 - `cmake` was not initially installed and was installed with Homebrew during Phase 0 verification.
 - CSV support is intentionally simple: comma-separated fields without quoted-field handling.
-- Phase 7 configurable latency and scheduled exchange arrival are not implemented.
-- Phase 8 resting limit orders, cancels, passive fills, and queue-ahead modeling are not implemented.
+- Phase 8 resting limit orders, cancels, cancellation races, passive fills, and queue-ahead modeling are not implemented.
 - Phase 9 portfolio accounting, inventory, cash, PnL, and equity are not implemented.
 - No market impact, benchmarking, Python bindings, multithreading, or performance optimization exists yet.
 
 ## Next phase
-Phase 7 - Latency-Aware Execution
+Phase 8 - Limit Orders, Cancel, Partial Fill & Passive Queue Approximation
 
 ## Verification commands
 ```bash
@@ -146,16 +138,16 @@ $ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 Result: PASS - Debug build configured.
 
 $ cmake --build build
-Result: PASS - built market_replay, replay_cli, smoke_tests, domain_types_tests, market_feed_tests, order_book_tests, event_loop_tests, strategy_tests, and execution_tests.
+Result: PASS - built market_replay, replay_cli, smoke_tests, domain_types_tests, market_feed_tests, order_book_tests, event_loop_tests, strategy_tests, execution_tests, and latency_execution_tests.
 
 $ ctest --test-dir build --output-on-failure
-Result: PASS - 7/7 tests passed.
+Result: PASS - 8/8 tests passed.
 
 $ ./build/replay_cli --help
 Result: PASS - exited 0 and printed usage.
 
-$ ./build/execution_tests
-Result: PASS - Phase 6 execution tests passed.
+$ ./build/latency_execution_tests
+Result: PASS - Phase 7 latency/execution tests passed.
 
 $ cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON
 Result: PASS - sanitizer build configured.
@@ -164,7 +156,7 @@ $ cmake --build build-asan
 Result: PASS - built sanitizer targets.
 
 $ ctest --test-dir build-asan --output-on-failure
-Result: PASS - 7/7 tests passed under ASan/UBSan configuration.
+Result: PASS - 8/8 tests passed under ASan/UBSan configuration.
 
 $ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 Result: PASS - Release build configured.
@@ -172,17 +164,20 @@ Result: PASS - Release build configured.
 $ cmake --build build-release
 Result: PASS - built Release targets.
 
-$ rg "std::thread|std::mutex|std::atomic|std::async|random_device|system_clock|uuid|wall-clock|resting|queue_ahead|portfolio|PnL|pnl|cash|inventory|passive fill|passive_fill|latency_" include src tests docs CMakeLists.txt
-Result: PASS - no Phase 7+ behavior found in execution code; matches are existing prior-phase limitation text, Phase 6 limitation text, Phase 1 latency primitives, and explicit "not implemented" documentation.
+$ rg "queue_fraction|queue_ahead|CancelRequest|cancel request|passive_fill|passive fill|resting order|resting_order|Portfolio|class Portfolio|realized|unrealized|equity|Sharpe|drawdown|returns|PnL|pnl" include/replay src tests/unit docs CMakeLists.txt
+Result: PASS - no Phase 8+ implementation introduced; matches are documented limitations or unrelated top-N wording.
 
-$ rg "\bdouble\b|\bfloat\b" include/replay/order.hpp include/replay/fill.hpp include/replay/execution_simulator.hpp src/order.cpp src/fill.cpp src/execution_simulator.cpp tests/unit/execution_simulator_test.cpp
+$ rg "std::thread|std::mutex|std::atomic|std::async|random_device|system_clock|uuid" include/replay src tests/unit CMakeLists.txt
+Result: PASS - no threading, randomness, wall-clock, or UUID behavior introduced.
+
+$ rg "\bdouble\b|\bfloat\b" include/replay/order.hpp include/replay/fill.hpp include/replay/execution_simulator.hpp include/replay/latency_execution.hpp src/order.cpp src/fill.cpp src/execution_simulator.cpp src/latency_execution.cpp tests/unit/execution_simulator_test.cpp tests/unit/latency_execution_test.cpp
 Result: PASS - no floating-point execution price/order/fill state introduced.
 
-$ rg "schedule_internal|InternalEventType::OrderArrival|InternalEventType::CancelArrival|queue_fraction|queue_ahead|Portfolio|class Portfolio|realized|unrealized|equity" include/replay/execution_simulator.hpp src/execution_simulator.cpp tests/unit/execution_simulator_test.cpp docs/execution_model.md
-Result: PASS - no Phase 7 scheduling, Phase 8 queue model, or Phase 9 portfolio implementation introduced; only documented current limitations matched.
+$ git diff --check
+Result: PASS - no whitespace errors.
 
 $ git status --short
-Result: PASS - only Phase 6 files are modified/untracked; no staged changes.
+Result: PASS - only Phase 7 files are modified/untracked; no staged changes.
 
 $ git status --ignored --short
 Result: PASS - `PROJECT_SPEC.md` and build directories are ignored.
@@ -245,6 +240,12 @@ Result: PASS - no absolute user-machine paths found in public files.
 - lifecycle transition table documented: PASS
 - fill invariants tested: PASS
 
+## Phase 7 acceptance gate
+- no execution uses stale decision-time book by accident: PASS
+- intervening events processed correctly: PASS
+- latency configuration works: PASS
+- deterministic tests pass: PASS
+
 ## Privacy / Git hygiene
 - `PROJECT_SPEC.md` remains local-only and ignored: PASS
 - no private/local-only file staged: PASS
@@ -255,12 +256,13 @@ Result: PASS - no absolute user-machine paths found in public files.
 ## Files added/modified
 - `CMakeLists.txt`
 - `docs/execution_model.md`
+- `include/replay/event_loop.hpp`
 - `include/replay/execution_simulator.hpp`
-- `include/replay/fill.hpp`
+- `include/replay/latency_execution.hpp`
 - `include/replay/order.hpp`
-- `include/replay/types.hpp`
 - `src/execution_simulator.cpp`
-- `src/fill.cpp`
+- `src/latency_execution.cpp`
 - `src/order.cpp`
 - `STATUS.md`
-- `tests/unit/execution_simulator_test.cpp`
+- `tests/fixtures/latency_execution_book_updates.csv`
+- `tests/unit/latency_execution_test.cpp`

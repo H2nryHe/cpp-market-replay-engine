@@ -29,6 +29,7 @@ enum class TraceEventClass {
 struct InternalEvent {
   InternalEventType type{InternalEventType::User};
   std::string label{};
+  std::optional<OrderId> order_id{};
 
   friend bool operator==(const InternalEvent&, const InternalEvent&) = default;
 };

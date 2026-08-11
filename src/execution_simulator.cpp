@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace replay {
@@ -41,6 +42,16 @@ std::vector<PriceLevel> opposite_depth(const Order& order, const OrderBook& book
   return book.top_bids(book.bid_level_count());
 }
 
+void ensure_pending_for_execution(Order& order) {
+  if (order.status() == OrderStatus::New) {
+    order.transition_to(OrderStatus::Pending);
+    return;
+  }
+  if (order.status() != OrderStatus::Pending) {
+    throw std::invalid_argument("order must be New or Pending before execution");
+  }
+}
+
 }  // namespace
 
 FeeModel::FeeModel(std::int64_t fee_rate_ppm) : fee_rate_ppm_{fee_rate_ppm} {
@@ -67,19 +78,38 @@ Order OrderFactory::create_order(Side side,
                                  Quantity quantity,
                                  TimestampNs submit_timestamp_ns,
                                  std::optional<PriceTicks> limit_price_ticks) {
+  return create_order_with_latency(side, order_type, quantity, submit_timestamp_ns, LatencyNs{}, limit_price_ticks);
+}
+
+Order OrderFactory::create_order_with_latency(Side side,
+                                              OrderType order_type,
+                                              Quantity quantity,
+                                              TimestampNs submit_timestamp_ns,
+                                              LatencyNs latency,
+                                              std::optional<PriceTicks> limit_price_ticks) {
+  const auto exchange_arrival_timestamp_ns = checked_add_latency(submit_timestamp_ns, latency);
   const auto order_id = next_order_id_;
   ++next_order_id_;
-  return Order{order_id, side, order_type, quantity, submit_timestamp_ns, submit_timestamp_ns, limit_price_ticks};
+  return Order{order_id, side, order_type, quantity, submit_timestamp_ns, exchange_arrival_timestamp_ns, limit_price_ticks};
 }
 
 Order OrderFactory::create_order_from_intent(const OrderIntent& intent) {
   return create_order(intent.side, intent.order_type, intent.quantity, intent.decision_timestamp_ns, intent.limit_price_ticks);
 }
 
+Order OrderFactory::create_order_from_intent(const OrderIntent& intent, LatencyNs latency) {
+  return create_order_with_latency(
+      intent.side, intent.order_type, intent.quantity, intent.decision_timestamp_ns, latency, intent.limit_price_ticks);
+}
+
 ExecutionSimulator::ExecutionSimulator(ExecutionConfig config) : config_{config} {}
 
 Order ExecutionSimulator::create_order_from_intent(const OrderIntent& intent) {
   return order_factory_.create_order_from_intent(intent);
+}
+
+Order ExecutionSimulator::create_order_from_intent(const OrderIntent& intent, LatencyNs latency) {
+  return order_factory_.create_order_from_intent(intent, latency);
 }
 
 Order ExecutionSimulator::create_order(Side side,
@@ -90,9 +120,18 @@ Order ExecutionSimulator::create_order(Side side,
   return order_factory_.create_order(side, order_type, quantity, submit_timestamp_ns, limit_price_ticks);
 }
 
+Order ExecutionSimulator::create_order_with_latency(Side side,
+                                                    OrderType order_type,
+                                                    Quantity quantity,
+                                                    TimestampNs submit_timestamp_ns,
+                                                    LatencyNs latency,
+                                                    std::optional<PriceTicks> limit_price_ticks) {
+  return order_factory_.create_order_with_latency(side, order_type, quantity, submit_timestamp_ns, latency, limit_price_ticks);
+}
+
 ExecutionResult ExecutionSimulator::execute_order(Order order, const OrderBook& book) {
+  ensure_pending_for_execution(order);
   if (order.order_type() == OrderType::Limit) {
-    order.transition_to(OrderStatus::Pending);
     order.transition_to(OrderStatus::Rejected);
     return ExecutionResult{order, {}};
   }
@@ -104,7 +143,7 @@ ExecutionResult ExecutionSimulator::execute_market_order(Order order, const Orde
     throw std::invalid_argument("execute_market_order requires a market order");
   }
 
-  order.transition_to(OrderStatus::Pending);
+  ensure_pending_for_execution(order);
   const auto depth = opposite_depth(order, book);
   if (depth.empty()) {
     order.transition_to(OrderStatus::Rejected);
@@ -161,6 +200,13 @@ Fill ExecutionSimulator::make_fill(const Order& order, PriceTicks price_ticks, Q
   };
   ++next_fill_sequence_id_;
   return fill;
+}
+
+TimestampNs checked_add_latency(TimestampNs submit_timestamp_ns, LatencyNs latency) {
+  if (latency.count > std::numeric_limits<TimestampNs>::max() - submit_timestamp_ns) {
+    throw std::overflow_error("exchange_arrival_timestamp_ns overflow");
+  }
+  return submit_timestamp_ns + latency.count;
 }
 
 }  // namespace replay

@@ -1,6 +1,8 @@
 # Execution Model
 
-Phase 6 adds execution-domain orders, fills, zero-latency market execution, and deterministic fees. It does not implement configurable latency, scheduled exchange arrival, resting passive limit orders, cancel races, passive fills, portfolio accounting, PnL, market impact, benchmarking, Python bindings, or multithreading.
+Phase 6 added execution-domain orders, fills, market execution, and deterministic fees. Phase 7 integrates market-order execution with the deterministic event scheduler so strategy decisions become pending orders and execute only at exchange arrival time.
+
+This phase does not implement resting passive limit orders, cancel requests, cancellation latency or races, passive fills, portfolio accounting, PnL, market impact, benchmarking, Python bindings, or multithreading.
 
 ## OrderIntent vs Order
 
@@ -14,13 +16,51 @@ Phase 6 adds execution-domain orders, fills, zero-latency market execution, and 
 - original quantity;
 - filled quantity;
 - computed remaining quantity;
+- decision timestamp;
 - submit timestamp;
 - exchange-arrival timestamp;
 - optional limit price;
 - current `OrderStatus`;
 - status history.
 
-Phase 6 exchange arrival is immediate: `exchange_arrival_timestamp_ns == submit_timestamp_ns`. Configurable delayed arrival belongs to Phase 7.
+`OrderIntent` conversion creates an `Order`, but no fill exists until an `OrderArrival` internal event is processed. Strategy code does not call execution directly.
+
+## Timing Semantics
+
+Phase 7 distinguishes:
+
+- decision time: when the strategy emitted the `OrderIntent`;
+- submit time: when the simulator accepted the intent as an order;
+- exchange arrival time: when the order becomes eligible for acknowledgement and execution.
+
+In the current implementation decision time and submit time are equal. Exchange arrival is:
+
+```text
+exchange_arrival_timestamp_ns = submit_timestamp_ns + configured_latency_ns
+```
+
+Latency is represented as `LatencyNs`, the same integer nanosecond unit used by the replay clock. User-facing conversions such as `LatencyNs::from_microseconds(50)` are explicit and reject negative values. Timestamp addition is checked; overflow throws `std::overflow_error` rather than wrapping.
+
+## Scheduler Integration
+
+Latency-aware execution uses the Phase 4 `EventLoop` internal scheduler. Submitting an intent:
+
+1. creates a deterministic `Order`;
+2. transitions it from `New` to `Pending`;
+3. stores it in the latency execution registry;
+4. schedules `InternalEventType::OrderArrival` with the order ID.
+
+The order registry owns order state. The scheduled internal event carries only the order ID and a deterministic label; it does not carry an `OrderBook` snapshot or a future execution result.
+
+At `OrderArrival`, execution reads the current historical `OrderBook` and then applies the Phase 6 market-order sweep rules.
+
+## Zero-Latency Semantics
+
+A latency of zero schedules exchange arrival at the current simulation timestamp; it does not bypass the deterministic event scheduler.
+
+Phase 4 ordering still applies: historical market events at timestamp `T` are processed before internal events at timestamp `T`. Therefore, if a strategy submits an order with zero latency during a `t=100` market callback and later source-order market events also have `t=100`, those market events process before the order arrival.
+
+Zero latency means scheduler timestamp equality, not inline execution inside a strategy callback.
 
 ## Order IDs
 
@@ -50,13 +90,15 @@ Allowed transitions:
 
 Invalid transitions throw `std::invalid_argument`.
 
-Immediate market-order outcomes use these policies:
+Market-order outcomes use these policies:
 
 - full fill: `New -> Pending -> Acknowledged -> Filled`;
 - partial fill with insufficient visible liquidity: `New -> Pending -> Acknowledged -> PartiallyFilled -> Canceled`;
 - zero executable liquidity: `New -> Pending -> Rejected`.
 
-For partial market execution, `Canceled` means only the unfilled remainder was canceled after the immediate sweep. Existing fills remain valid. A market-order remainder never becomes a resting order in Phase 6.
+During latency, an order remains `Pending` with zero filled quantity. No fill can occur before the `OrderArrival` internal event.
+
+For partial market execution, `Canceled` means only the unfilled remainder was canceled after the arrival-time sweep. Existing fills remain valid. A market-order remainder never becomes a resting order in Phase 7.
 
 ## Market-Order Sweep Rules
 
@@ -66,6 +108,10 @@ Market orders walk the opposite side of the visible L2 book in price priority:
 - Sell Market reads bids from highest price to lower prices.
 
 Each consumed price level creates a deterministic `Fill`. Fill sequence IDs are simulator-local monotonic integers and reflect execution order.
+
+Execution uses the book state at exchange arrival time. It does not use a decision-time snapshot, submit-time snapshot, stale book copied into the order, or future book state.
+
+If the historical feed ends while an order is pending, the Phase 4 event loop continues processing internal events. The pending order arrives after feed exhaustion and executes against the final historical `OrderBook` state.
 
 ## Historical Book Immutability
 
@@ -77,6 +123,8 @@ This is a zero-market-impact baseline:
 Simulated execution reads historical visible liquidity but does not mutate the authoritative historical OrderBook.
 Market impact is not modeled.
 ```
+
+Because market impact is not modeled, multiple simulated market orders at the same arrival time may observe the same historical visible liquidity. The simulator does not secretly reduce historical depth to make simulated orders compete.
 
 ## Fill Records
 
@@ -126,9 +174,9 @@ fee_amount = round_half_up(notional_tick_quantity * fee_rate_ppm / 1,000,000)
 
 `fee_amount` is stored as integer `FeeAmount` in the same tick-quantity notional unit. The calculation uses integer arithmetic with checked intermediate range; no hidden floating-point rounding is used.
 
-## Phase 6 Limit-Order Policy
+## Limit-Order Policy
 
-`OrderType::Limit` is represented structurally for future compatibility. Phase 6 does not implement marketable limit execution, resting orders, cancels, passive queue fills, or queue-ahead modeling.
+`OrderType::Limit` is represented structurally for future compatibility. Phase 7 does not implement marketable limit execution, resting orders, cancels, passive queue fills, or queue-ahead modeling.
 
 Submitting a limit order to `ExecutionSimulator::execute_order` produces:
 
@@ -140,7 +188,6 @@ No fills are generated. This explicit rejection prevents accidental treatment of
 
 ## Current Limitations
 
-- No configurable latency or scheduled exchange-arrival event.
 - No resting order book for simulated orders.
 - No cancel request handling.
 - No passive limit fills or L2 queue approximation.

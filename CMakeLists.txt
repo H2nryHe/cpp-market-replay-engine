@@ -19,6 +19,7 @@ add_library(market_replay
   src/event_loop.cpp
   src/execution_simulator.cpp
   src/fill.cpp
+  src/latency_execution.cpp
   src/market_feed.cpp
   src/order.cpp
   src/order_book.cpp
@@ -146,4 +147,15 @@ if(BUILD_TESTING)
 
   add_test(NAME execution_tests COMMAND execution_tests)
   set_tests_properties(execution_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(latency_execution_tests
+    tests/unit/latency_execution_test.cpp
+  )
+
+  target_link_libraries(latency_execution_tests PRIVATE market_replay::market_replay)
+  replay_apply_warnings(latency_execution_tests)
+  replay_apply_sanitizers(latency_execution_tests)
+
+  add_test(NAME latency_execution_tests COMMAND latency_execution_tests)
+  set_tests_properties(latency_execution_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

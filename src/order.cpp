@@ -27,6 +27,7 @@ Order::Order(OrderId order_id,
       side_{side},
       order_type_{order_type},
       original_quantity_{original_quantity},
+      decision_timestamp_ns_{submit_timestamp_ns},
       submit_timestamp_ns_{submit_timestamp_ns},
       exchange_arrival_timestamp_ns_{exchange_arrival_timestamp_ns},
       limit_price_ticks_{limit_price_ticks} {
@@ -64,6 +65,10 @@ Quantity Order::filled_quantity() const noexcept {
 
 Quantity Order::remaining_quantity() const noexcept {
   return original_quantity_ - filled_quantity_;
+}
+
+TimestampNs Order::decision_timestamp_ns() const noexcept {
+  return decision_timestamp_ns_;
 }
 
 TimestampNs Order::submit_timestamp_ns() const noexcept {
@@ -146,7 +151,8 @@ std::string canonical_order_string(const Order& order) {
   std::ostringstream os;
   os << order.order_id() << ',' << (order.side() == Side::Buy ? "buy" : "sell") << ','
      << (order.order_type() == OrderType::Market ? "market" : "limit") << ',' << order.original_quantity() << ','
-     << order.filled_quantity() << ',' << order.remaining_quantity() << ',' << order.submit_timestamp_ns() << ','
+     << order.filled_quantity() << ',' << order.remaining_quantity() << ',' << order.decision_timestamp_ns() << ','
+     << order.submit_timestamp_ns() << ','
      << order.exchange_arrival_timestamp_ns() << ',';
   if (order.limit_price_ticks().has_value()) {
     os << *order.limit_price_ticks();

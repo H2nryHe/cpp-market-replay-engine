@@ -36,7 +36,14 @@ class OrderFactory {
                      Quantity quantity,
                      TimestampNs submit_timestamp_ns,
                      std::optional<PriceTicks> limit_price_ticks = std::nullopt);
+  Order create_order_with_latency(Side side,
+                                  OrderType order_type,
+                                  Quantity quantity,
+                                  TimestampNs submit_timestamp_ns,
+                                  LatencyNs latency,
+                                  std::optional<PriceTicks> limit_price_ticks = std::nullopt);
   Order create_order_from_intent(const OrderIntent& intent);
+  Order create_order_from_intent(const OrderIntent& intent, LatencyNs latency);
 
  private:
   OrderId next_order_id_{1};
@@ -52,11 +59,18 @@ class ExecutionSimulator {
   explicit ExecutionSimulator(ExecutionConfig config = {});
 
   Order create_order_from_intent(const OrderIntent& intent);
+  Order create_order_from_intent(const OrderIntent& intent, LatencyNs latency);
   Order create_order(Side side,
                      OrderType order_type,
                      Quantity quantity,
                      TimestampNs submit_timestamp_ns,
                      std::optional<PriceTicks> limit_price_ticks = std::nullopt);
+  Order create_order_with_latency(Side side,
+                                  OrderType order_type,
+                                  Quantity quantity,
+                                  TimestampNs submit_timestamp_ns,
+                                  LatencyNs latency,
+                                  std::optional<PriceTicks> limit_price_ticks = std::nullopt);
 
   ExecutionResult execute_order(Order order, const OrderBook& book);
   ExecutionResult execute_market_order(Order order, const OrderBook& book);
@@ -70,5 +84,7 @@ class ExecutionSimulator {
   OrderFactory order_factory_{};
   FillSequenceId next_fill_sequence_id_{1};
 };
+
+TimestampNs checked_add_latency(TimestampNs submit_timestamp_ns, LatencyNs latency);
 
 }  // namespace replay
