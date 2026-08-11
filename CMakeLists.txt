@@ -16,8 +16,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CTest)
 
 add_library(market_replay
+  src/event_loop.cpp
   src/market_feed.cpp
   src/order_book.cpp
+  src/simulation_clock.cpp
   src/types.cpp
   src/version.cpp
 )
@@ -105,4 +107,15 @@ if(BUILD_TESTING)
 
   add_test(NAME order_book_tests COMMAND order_book_tests)
   set_tests_properties(order_book_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(event_loop_tests
+    tests/unit/event_loop_test.cpp
+  )
+
+  target_link_libraries(event_loop_tests PRIVATE market_replay::market_replay)
+  replay_apply_warnings(event_loop_tests)
+  replay_apply_sanitizers(event_loop_tests)
+
+  add_test(NAME event_loop_tests COMMAND event_loop_tests)
+  set_tests_properties(event_loop_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

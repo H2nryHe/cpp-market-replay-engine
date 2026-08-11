@@ -1,13 +1,13 @@
 # Project Status
 
 ## Current phase
-Phase 3 - L2 Order Book Reconstruction
+Phase 4 - Simulation Clock & Deterministic Event Loop
 
 ## Phase status
 PASS
 
 ## Last verified commit
-Not available - workspace is not currently a Git repository.
+6c2e761
 
 ## Build
 - Debug: PASS
@@ -15,10 +15,10 @@ Not available - workspace is not currently a Git repository.
 - ASan/UBSan: PASS
 
 ## Tests
-- CTest: 4/4 passed
+- CTest: 5/5 passed
 - CLI smoke: PASS
 - Golden replay: PASS for Phase 3 order-book fixture
-- Determinism: PASS for 100 repeated golden book replays and stable canonical state hash
+- Determinism: PASS for Phase 4 deterministic trace, final simulation time, and final order-book hash
 
 ## Benchmarks
 Not started
@@ -28,14 +28,43 @@ Not started
 - Phase 1 - PASS
 - Phase 2 - PASS
 - Phase 3 - PASS
+- Phase 4 - PASS
 
 ## Current work
-- Phase 3 completed. Stopped before Phase 4.
-- Implemented deterministic visible L2 `OrderBook` consuming Phase 2 `BookUpdateEvent`.
-- Implemented `apply`, best bid/ask, bid/ask depth lookup, top-N snapshots, level counts, empty/one-sided handling, spread, exact midpoint, locked/crossed flags, canonical state, and stable state hash.
-- Added Phase 3 golden order-book fixture under `tests/golden/`.
-- Added order-book unit tests for insert, price priority, replace semantics, delete, absent delete, empty/one-sided behavior, spread, half-tick mid, top-N, locked/crossed states, extreme values, golden replay, determinism, and invariants.
-- Documented Phase 3 behavior in `docs/order_book.md`.
+- Phase 4 completed. Stopped before Phase 5.
+- Implemented `SimulationClock` with monotonic `TimestampNs` advancement and explicit backwards-advance rejection.
+- Implemented deterministic single-threaded `InternalEventScheduler` with monotonic internal insertion sequence IDs.
+- Implemented `EventLoop` that merges Phase 2 historical market events with internal scheduled events using an explicit total ordering.
+- Added dispatch hooks for market/internal events and optional Phase 3 `OrderBook` application for `BookUpdateEvent`.
+- Added deterministic trace entries, canonical trace encoding, and FNV-1a 64-bit trace hashing.
+- Added Phase 4 tests for clock monotonicity, historical ordering, timestamp ties, market/internal interleaving, same-timestamp precedence, internal insertion order, past/current scheduling, empty/internal-only replay, book integration, trade dispatch, determinism, no-lookahead, end-of-stream with pending internals, single-event cases, and timestamp-limit edge behavior.
+- Documented Phase 4 behavior in `docs/event_loop.md`.
+
+## Event ordering policy
+- Primary key: `timestamp_ns` ascending.
+- At the same timestamp, historical market events are processed before internal scheduled events.
+- Among historical market events, Phase 2 source order and `EventKey` ordering are preserved; the event loop does not silently sort or repair market data.
+- Among internal events at the same timestamp, deterministic insertion order is preserved by `internal_sequence_id`.
+
+## Same-timestamp precedence
+- Market event at timestamp `T` precedes any internal event scheduled for timestamp `T`.
+- Internal events scheduled at the current simulation time are accepted and processed according to the same rule.
+
+## Internal scheduler ordering rule
+- Scheduling in the future is accepted.
+- Scheduling at the current simulation time is accepted.
+- Scheduling in the past is rejected with an exception.
+- Duplicate payloads are allowed.
+- Internal events with equal timestamps are ordered by deterministic monotonic `internal_sequence_id`.
+
+## End-of-stream policy
+- The event loop terminates only after both the historical market stream is exhausted and the internal scheduler is empty.
+- Pending internal events after the last historical market event are processed.
+
+## Deterministic trace method
+- Trace lines use `M,<timestamp_ns>,<market_event_type>,<market_sequence_id>` for market events.
+- Trace lines use `I,<timestamp_ns>,<internal_event_type>,<internal_sequence_id>,<label>` for internal events.
+- `EventLoopResult::trace_hash()` applies FNV-1a 64-bit to the canonical trace as a deterministic regression checksum.
 
 ## Book data structure
 - Bids: `std::map<PriceTicks, Quantity, std::greater<PriceTicks>>`, best to worst.
@@ -67,14 +96,14 @@ Not started
 - The same `sequence_id` may appear at different timestamps because the unique ordering key is the full `EventKey`.
 
 ## Known limitations
-- The workspace has no Git metadata, so commit tracking is unavailable.
 - `cmake` was not initially installed and was installed with Homebrew during Phase 0 verification.
 - CSV support is intentionally simple: comma-separated fields without quoted-field handling.
-- Phase 4 replay/event scheduling is not implemented.
-- No simulation clock, strategy, orders, fills, execution simulator, latency model, portfolio, benchmarking, Python bindings, multithreading, or performance optimization exists yet.
+- Phase 5 strategy interface is not implemented.
+- Internal event categories are generic scheduling payloads only; no order, cancel, fill, execution, or latency behavior is implemented.
+- No strategy, order lifecycle, fills, execution simulator, latency model, portfolio, benchmarking, Python bindings, multithreading, or performance optimization exists yet.
 
 ## Next phase
-Phase 4 - Simulation Clock & Deterministic Event Loop
+Phase 5 - Strategy Interface + Queue Imbalance Demo
 
 ## Verification commands
 ```bash
@@ -82,10 +111,10 @@ $ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 Result: PASS - Debug build configured.
 
 $ cmake --build build
-Result: PASS - built market_replay, replay_cli, smoke_tests, domain_types_tests, market_feed_tests, and order_book_tests.
+Result: PASS - built market_replay, replay_cli, smoke_tests, domain_types_tests, market_feed_tests, order_book_tests, and event_loop_tests.
 
 $ ctest --test-dir build --output-on-failure
-Result: PASS - 4/4 tests passed.
+Result: PASS - 5/5 tests passed.
 
 $ ./build/replay_cli --help
 Result: PASS - exited 0 and printed usage.
@@ -97,7 +126,7 @@ $ cmake --build build-asan
 Result: PASS - built sanitizer targets.
 
 $ ctest --test-dir build-asan --output-on-failure
-Result: PASS - 4/4 tests passed under ASan/UBSan configuration.
+Result: PASS - 5/5 tests passed under ASan/UBSan configuration.
 
 $ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 Result: PASS - Release build configured.
@@ -105,14 +134,23 @@ Result: PASS - Release build configured.
 $ cmake --build build-release
 Result: PASS - built Release targets.
 
-$ ./build/order_book_tests
-Result: PASS - Phase 3 order-book tests passed.
+$ ./build/event_loop_tests
+Result: PASS - Phase 4 event-loop tests passed.
 
-$ rg "std::stod|stod\(|\bfloat\b|\bdouble\b" include src tests apps CMakeLists.txt
-Result: PASS - no implementation/test floating-point price parsing or order-book price-key use found.
+$ rg "std::chrono::system_clock|random_device|std::thread|std::mutex|std::atomic|async\(|unordered_" include src tests apps CMakeLists.txt
+Result: PASS - no wall-clock, randomness, thread, mutex, atomic, async, or unordered-container ordering source found.
 
-$ rg "SimulationClock|simulation_clock|ReplayEngine|replay_engine|Strategy|ExecutionSimulator|execution_simulator|Portfolio|portfolio|pybind|thread|benchmark" include src tests apps CMakeLists.txt docs
-Result: PASS - later-phase terms appear only in documentation stating those features are not implemented; project name in CMake also matches `replay`.
+$ git status --short
+Result: PASS - only Phase 4 files are modified/untracked; no staged changes.
+
+$ git status --ignored --short
+Result: PASS - `PROJECT_SPEC.md` and build directories are ignored.
+
+$ git check-ignore -v PROJECT_SPEC.md cpp-market-replay-engine_PROJECT_SPEC.md
+Result: PASS - `PROJECT_SPEC.md` is ignored by `.gitignore`; `cpp-market-replay-engine_PROJECT_SPEC.md` is not reported in Git status.
+
+$ rg "$(printf '\057Users\057\174\057private\057\174Local\040Documents')" -g '!PROJECT_SPEC.md' -g '!cpp-market-replay-engine_PROJECT_SPEC.md' -g '!build/**' -g '!build-asan/**' -g '!build-release/**' -g '!.git/**'
+Result: PASS - no absolute user-machine paths found in public files.
 ```
 
 ## Phase 0 acceptance gate
@@ -145,11 +183,26 @@ Result: PASS - later-phase terms appear only in documentation stating those feat
 - no negative quantities: PASS
 - sanitizer tests pass: PASS
 
+## Phase 4 acceptance gate
+- event loop is single-threaded: PASS
+- tie-breaking documented: PASS
+- internal events interleave correctly with market events: PASS
+- deterministic trace test passes: PASS
+- no later phase logic embedded prematurely: PASS
+
+## Privacy / Git hygiene
+- `PROJECT_SPEC.md` remains local-only and ignored: PASS
+- no private/local-only file staged: PASS
+- no staged changes: PASS
+- no absolute user-machine paths introduced into public files: PASS
+- fixtures are synthetic and publishable: PASS
+
 ## Files added/modified
 - `CMakeLists.txt`
-- `docs/order_book.md`
-- `include/replay/order_book.hpp`
+- `docs/event_loop.md`
+- `include/replay/event_loop.hpp`
+- `include/replay/simulation_clock.hpp`
 - `STATUS.md`
-- `src/order_book.cpp`
-- `tests/golden/order_book_updates.csv`
-- `tests/unit/order_book_test.cpp`
+- `src/event_loop.cpp`
+- `src/simulation_clock.cpp`
+- `tests/unit/event_loop_test.cpp`
