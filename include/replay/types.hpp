@@ -9,6 +9,9 @@ namespace replay {
 using TimestampNs = std::uint64_t;
 using PriceTicks = std::int64_t;
 using Quantity = std::int64_t;
+using OrderId = std::uint64_t;
+using FillSequenceId = std::uint64_t;
+using FeeAmount = std::int64_t;
 
 enum class Side {
   Buy,

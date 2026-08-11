@@ -17,7 +17,10 @@ include(CTest)
 
 add_library(market_replay
   src/event_loop.cpp
+  src/execution_simulator.cpp
+  src/fill.cpp
   src/market_feed.cpp
+  src/order.cpp
   src/order_book.cpp
   src/simulation_clock.cpp
   src/strategy.cpp
@@ -132,4 +135,15 @@ if(BUILD_TESTING)
 
   add_test(NAME strategy_tests COMMAND strategy_tests)
   set_tests_properties(strategy_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(execution_tests
+    tests/unit/execution_simulator_test.cpp
+  )
+
+  target_link_libraries(execution_tests PRIVATE market_replay::market_replay)
+  replay_apply_warnings(execution_tests)
+  replay_apply_sanitizers(execution_tests)
+
+  add_test(NAME execution_tests COMMAND execution_tests)
+  set_tests_properties(execution_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
