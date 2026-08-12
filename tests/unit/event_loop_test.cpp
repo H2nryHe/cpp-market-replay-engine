@@ -236,6 +236,30 @@ void test_deterministic_trace() {
   }
 }
 
+void test_canonical_trace_fixture_exact_bytes_and_hash() {
+  replay::OrderBook book;
+  replay::EventLoop loop{{book_event(100, 1, replay::Side::Buy, 10000, 5),
+                          trade_event(100, 2, 10000, 1),
+                          book_event(150, 3, replay::Side::Sell, 10001, 4),
+                          book_event(175, 4, replay::Side::Buy, 9999, 2)}};
+  loop.schedule_internal(150, replay::InternalEvent{replay::InternalEventType::Timer, "at150"});
+  loop.schedule_internal(100, replay::InternalEvent{replay::InternalEventType::User, "at100"});
+  loop.schedule_internal(125, replay::InternalEvent{replay::InternalEventType::OrderArrival, "at125"});
+
+  const auto result = loop.run(replay::EventLoopHandlers{.order_book = &book});
+  const std::string expected_trace =
+      "M,100,book_update,1\n"
+      "M,100,trade,2\n"
+      "I,100,user,1,at100\n"
+      "I,125,order_arrival,2,at125\n"
+      "M,150,book_update,3\n"
+      "I,150,timer,0,at150\n"
+      "M,175,book_update,4\n";
+
+  expect_true(result.canonical_trace() == expected_trace, "canonical trace fixture exact bytes");
+  expect_true(result.trace_hash() == 0x0e1151708630d39aULL, "canonical trace fixture hash unchanged");
+}
+
 void test_no_lookahead_causality() {
   replay::OrderBook book;
   replay::EventLoop loop{{book_event(100, 1, replay::Side::Buy, 10000, 5),
@@ -320,6 +344,7 @@ int main() {
   test_book_update_integration_matches_direct_replay();
   test_trade_dispatch_does_not_mutate_book();
   test_deterministic_trace();
+  test_canonical_trace_fixture_exact_bytes_and_hash();
   test_no_lookahead_causality();
   test_end_of_stream_with_pending_internal_events();
   test_one_event_and_timestamp_limit_edges();

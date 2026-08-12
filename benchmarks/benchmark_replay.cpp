@@ -60,6 +60,15 @@ std::string hex64(std::uint64_t value) {
   return os.str();
 }
 
+std::uint64_t fnv1a64(std::string_view text) {
+  std::uint64_t hash = 14695981039346656037ULL;
+  for (const char ch : text) {
+    hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(ch));
+    hash *= 1099511628211ULL;
+  }
+  return hash;
+}
+
 void checksum_mix(std::uint64_t& checksum, std::uint64_t value) noexcept {
   checksum ^= value + 0x9e3779b97f4a7c15ULL + (checksum << 6U) + (checksum >> 2U);
 }
@@ -275,6 +284,16 @@ std::string book_hash_for_events(const std::vector<replay::MarketEvent>& events)
   return hex64(book.state_hash());
 }
 
+replay::EventLoopResult trace_result_for_events(const std::vector<replay::MarketEvent>& events) {
+  replay::OrderBook book;
+  replay::EventLoop loop{events};
+  auto result = loop.run(replay::EventLoopHandlers{.order_book = &book});
+  if (result.processed_event_count != events.size()) {
+    throw std::runtime_error("trace result processed event count mismatch");
+  }
+  return result;
+}
+
 BenchmarkRow make_row(std::string benchmark_name,
                       std::size_t event_count,
                       std::size_t repetition,
@@ -324,6 +343,39 @@ BenchmarkRow run_core_replay_once(const std::vector<replay::MarketEvent>& events
     throw std::runtime_error("core replay processed event count mismatch");
   }
   return make_row("core_preloaded_replay", events.size(), repetition, elapsed_ns(begin, end), hex64(book.state_hash()));
+}
+
+BenchmarkRow run_core_replay_with_trace_materialization_once(const std::vector<replay::MarketEvent>& events,
+                                                             std::size_t repetition) {
+  auto run_events = events;
+  replay::OrderBook book;
+  std::string canonical_trace;
+  const auto begin = Clock::now();
+  replay::EventLoop loop{std::move(run_events)};
+  const auto result = loop.run(replay::EventLoopHandlers{.order_book = &book});
+  canonical_trace = result.canonical_trace();
+  const auto end = Clock::now();
+  if (result.processed_event_count != events.size()) {
+    throw std::runtime_error("core replay with trace materialization processed event count mismatch");
+  }
+  const auto final_hash = hex64(book.state_hash()) + ":" + hex64(fnv1a64(canonical_trace));
+  return make_row("core_replay_with_trace_materialization",
+                  events.size(),
+                  repetition,
+                  elapsed_ns(begin, end),
+                  final_hash);
+}
+
+BenchmarkRow run_trace_materialization_once(const replay::EventLoopResult& result, std::size_t repetition) {
+  std::string canonical_trace;
+  const auto begin = Clock::now();
+  canonical_trace = result.canonical_trace();
+  const auto end = Clock::now();
+  return make_row("trace_materialization_only",
+                  result.processed_event_count,
+                  repetition,
+                  elapsed_ns(begin, end),
+                  hex64(fnv1a64(canonical_trace)));
 }
 
 BenchmarkRow run_e2e_once(std::size_t repetition, const std::filesystem::path& output_dir) {
@@ -444,6 +496,9 @@ void run_self_test() {
   if (event_dispatch_checksum(events_a) != event_dispatch_checksum(events_b)) {
     throw std::runtime_error("event dispatch checksum is non-deterministic");
   }
+  if (trace_result_for_events(events_a).canonical_trace() != trace_result_for_events(events_b).canonical_trace()) {
+    throw std::runtime_error("trace materialization is non-deterministic");
+  }
 }
 
 }  // namespace
@@ -503,6 +558,31 @@ int main(int argc, char** argv) {
         }
         return row;
       });
+
+      const auto trace_result = trace_result_for_events(events);
+      const auto expected_trace_hash = hex64(fnv1a64(trace_result.canonical_trace()));
+      run_repeated(rows,
+                   options.warmups,
+                   options.repetitions,
+                   [&trace_result, &expected_trace_hash](std::size_t repetition) {
+                     auto row = run_trace_materialization_once(trace_result, repetition);
+                     if (row.final_state_hash != expected_trace_hash) {
+                       throw std::runtime_error("trace materialization checksum mismatch");
+                     }
+                     return row;
+                   });
+
+      const auto expected_combined_hash = expected_event_hash + ":" + expected_trace_hash;
+      run_repeated(rows,
+                   options.warmups,
+                   options.repetitions,
+                   [&events, &expected_combined_hash](std::size_t repetition) {
+                     auto row = run_core_replay_with_trace_materialization_once(events, repetition);
+                     if (row.final_state_hash != expected_combined_hash) {
+                       throw std::runtime_error("core replay with trace materialization hash mismatch");
+                     }
+                     return row;
+                   });
     }
 
     if (options.include_e2e) {

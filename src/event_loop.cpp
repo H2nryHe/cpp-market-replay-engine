@@ -11,28 +11,46 @@ namespace {
 constexpr std::uint64_t fnv1a_offset_basis = 14695981039346656037ULL;
 constexpr std::uint64_t fnv1a_prime = 1099511628211ULL;
 
-std::string market_event_type_name(MarketEventType type) {
+TraceEventKind trace_kind_for_market(MarketEventType type) {
   switch (type) {
     case MarketEventType::BookUpdate:
-      return "book_update";
+      return TraceEventKind::BookUpdate;
     case MarketEventType::Trade:
-      return "trade";
+      return TraceEventKind::Trade;
   }
   throw std::invalid_argument("invalid MarketEventType");
 }
 
-std::string internal_event_type_name(InternalEventType type) {
+TraceEventKind trace_kind_for_internal(InternalEventType type) {
   switch (type) {
     case InternalEventType::Timer:
-      return "timer";
+      return TraceEventKind::Timer;
     case InternalEventType::OrderArrival:
-      return "order_arrival";
+      return TraceEventKind::OrderArrival;
     case InternalEventType::CancelArrival:
-      return "cancel_arrival";
+      return TraceEventKind::CancelArrival;
     case InternalEventType::User:
-      return "user";
+      return TraceEventKind::User;
   }
   throw std::invalid_argument("invalid InternalEventType");
+}
+
+std::string trace_kind_name(TraceEventKind kind) {
+  switch (kind) {
+    case TraceEventKind::BookUpdate:
+      return "book_update";
+    case TraceEventKind::Trade:
+      return "trade";
+    case TraceEventKind::Timer:
+      return "timer";
+    case TraceEventKind::OrderArrival:
+      return "order_arrival";
+    case TraceEventKind::CancelArrival:
+      return "cancel_arrival";
+    case TraceEventKind::User:
+      return "user";
+  }
+  throw std::invalid_argument("invalid TraceEventKind");
 }
 
 std::uint64_t fnv1a64(std::string_view text) {
@@ -45,14 +63,12 @@ std::uint64_t fnv1a64(std::string_view text) {
   return hash;
 }
 
-EventTraceEntry trace_market_event(const MarketEvent& event) {
+EventTraceEntry trace_market_event(EventKey key, MarketEventType type) {
   return EventTraceEntry{
       .event_class = TraceEventClass::Market,
-      .timestamp_ns = event.key().timestamp_ns,
-      .market_event_type = event.type(),
-      .market_sequence_id = event.key().sequence_id,
-      .internal_event_type = std::nullopt,
-      .internal_sequence_id = std::nullopt,
+      .kind = trace_kind_for_market(type),
+      .timestamp_ns = key.timestamp_ns,
+      .sequence_id = key.sequence_id,
       .label = {},
   };
 }
@@ -60,11 +76,9 @@ EventTraceEntry trace_market_event(const MarketEvent& event) {
 EventTraceEntry trace_internal_event(const ScheduledInternalEvent& event) {
   return EventTraceEntry{
       .event_class = TraceEventClass::Internal,
+      .kind = trace_kind_for_internal(event.event.type),
       .timestamp_ns = event.timestamp_ns,
-      .market_event_type = std::nullopt,
-      .market_sequence_id = std::nullopt,
-      .internal_event_type = event.event.type,
-      .internal_sequence_id = event.internal_sequence_id,
+      .sequence_id = event.internal_sequence_id,
       .label = event.event.label,
   };
 }
@@ -148,15 +162,18 @@ bool EventLoop::has_pending_internal_events() const noexcept {
 
 EventLoopResult EventLoop::run(EventLoopHandlers handlers) {
   EventLoopResult result;
+  result.trace.reserve(historical_events_.size());
 
   while (next_market_index_ < historical_events_.size() || !scheduler_.empty()) {
     if (should_process_market_next()) {
       const auto& event = next_market_event();
-      clock_.advance_to(event.key().timestamp_ns);
-      if (handlers.order_book != nullptr && event.type() == MarketEventType::BookUpdate) {
+      const auto key = event.key();
+      const auto type = event.type();
+      clock_.advance_to(key.timestamp_ns);
+      if (handlers.order_book != nullptr && type == MarketEventType::BookUpdate) {
         handlers.order_book->apply(event.book_update());
       }
-      result.trace.push_back(trace_market_event(event));
+      result.trace.push_back(trace_market_event(key, type));
       ++next_market_index_;
       if (handlers.on_market) {
         handlers.on_market(event, *this);
@@ -200,13 +217,18 @@ const MarketEvent& EventLoop::next_market_event() const {
 std::string canonical_trace_line(const EventTraceEntry& entry) {
   std::ostringstream os;
   if (entry.event_class == TraceEventClass::Market) {
-    os << "M," << entry.timestamp_ns << ',' << market_event_type_name(*entry.market_event_type) << ','
-       << *entry.market_sequence_id;
+    if (entry.kind != TraceEventKind::BookUpdate && entry.kind != TraceEventKind::Trade) {
+      throw std::invalid_argument("market trace entry has non-market kind");
+    }
+    os << "M," << entry.timestamp_ns << ',' << trace_kind_name(entry.kind) << ',' << entry.sequence_id;
     return os.str();
   }
 
-  os << "I," << entry.timestamp_ns << ',' << internal_event_type_name(*entry.internal_event_type) << ','
-     << *entry.internal_sequence_id << ',' << entry.label;
+  if (entry.kind == TraceEventKind::BookUpdate || entry.kind == TraceEventKind::Trade) {
+    throw std::invalid_argument("internal trace entry has market kind");
+  }
+  os << "I," << entry.timestamp_ns << ',' << trace_kind_name(entry.kind) << ',' << entry.sequence_id << ','
+     << entry.label;
   return os.str();
 }
 

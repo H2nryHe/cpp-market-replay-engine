@@ -26,6 +26,15 @@ enum class TraceEventClass {
   Internal,
 };
 
+enum class TraceEventKind {
+  BookUpdate,
+  Trade,
+  Timer,
+  OrderArrival,
+  CancelArrival,
+  User,
+};
+
 struct InternalEvent {
   InternalEventType type{InternalEventType::User};
   std::string label{};
@@ -44,11 +53,9 @@ struct ScheduledInternalEvent {
 
 struct EventTraceEntry {
   TraceEventClass event_class{TraceEventClass::Market};
+  TraceEventKind kind{TraceEventKind::BookUpdate};
   TimestampNs timestamp_ns{};
-  std::optional<MarketEventType> market_event_type{};
-  std::optional<std::uint64_t> market_sequence_id{};
-  std::optional<InternalEventType> internal_event_type{};
-  std::optional<std::uint64_t> internal_sequence_id{};
+  std::uint64_t sequence_id{};
   std::string label{};
 
   friend bool operator==(const EventTraceEntry&, const EventTraceEntry&) = default;
