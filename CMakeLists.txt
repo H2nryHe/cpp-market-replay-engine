@@ -23,6 +23,7 @@ add_library(market_replay
   src/market_feed.cpp
   src/order.cpp
   src/order_book.cpp
+  src/portfolio.cpp
   src/simulation_clock.cpp
   src/strategy.cpp
   strategies/queue_imbalance_strategy.cpp
@@ -169,4 +170,15 @@ if(BUILD_TESTING)
 
   add_test(NAME passive_limit_tests COMMAND passive_limit_tests)
   set_tests_properties(passive_limit_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(portfolio_tests
+    tests/unit/portfolio_test.cpp
+  )
+
+  target_link_libraries(portfolio_tests PRIVATE market_replay::market_replay)
+  replay_apply_warnings(portfolio_tests)
+  replay_apply_sanitizers(portfolio_tests)
+
+  add_test(NAME portfolio_tests COMMAND portfolio_tests)
+  set_tests_properties(portfolio_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
