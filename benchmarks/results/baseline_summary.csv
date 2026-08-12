@@ -1,0 +1,6 @@
+benchmark_name,event_count,repetitions,warmups,median_events_per_sec,median_ns_per_event,min_ns_per_event,max_ns_per_event,final_state_hash
+order_book_apply,100000,5,1,43403568.989,23.040,22.144,26.867,e3c154d22706031c
+core_preloaded_replay,100000,5,1,25711349.478,38.893,37.365,40.727,7881be7964fe68e6
+order_book_apply,1000000,5,1,46764482.376,21.384,21.357,21.671,a7145c79f43da48a
+core_preloaded_replay,1000000,5,1,26226068.712,38.130,37.821,38.373,2855ca09d92eee1f
+end_to_end_public_example,5,5,1,6366.045,157083.400,124800.000,338666.600,8aca37583ca6f83a

@@ -18,4 +18,5 @@ compile_commands.json
 .DS_Store
 artifacts/*
 !artifacts/.gitkeep
+benchmarks/results/e2e_repetition_*/
 PROJECT_SPEC.md

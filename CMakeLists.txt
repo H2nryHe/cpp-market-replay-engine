@@ -74,6 +74,14 @@ target_link_libraries(replay_cli PRIVATE market_replay::market_replay)
 replay_apply_warnings(replay_cli)
 replay_apply_sanitizers(replay_cli)
 
+add_executable(benchmark_replay
+  benchmarks/benchmark_replay.cpp
+)
+
+target_link_libraries(benchmark_replay PRIVATE market_replay::market_replay)
+replay_apply_warnings(benchmark_replay)
+replay_apply_sanitizers(benchmark_replay)
+
 if(BUILD_TESTING)
   add_executable(smoke_tests
     tests/unit/smoke_test.cpp
@@ -234,4 +242,7 @@ if(BUILD_TESTING)
     DEPENDS replay_cli_example
     WILL_FAIL TRUE
   )
+
+  add_test(NAME benchmark_replay_self_test COMMAND benchmark_replay --self-test)
+  set_tests_properties(benchmark_replay_self_test PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

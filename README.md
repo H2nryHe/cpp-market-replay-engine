@@ -30,6 +30,17 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
 ```
 
+## Benchmarks
+
+Performance baselines are measured only with Release binaries:
+
+```bash
+./build-release/benchmark_replay --output-dir benchmarks/results --scales 100000,1000000 --repetitions 5 --warmups 1
+```
+
+The current Phase 11 methodology and measured single-threaded baseline are documented in `docs/benchmarks.md`. The
+small public CSV summaries live in `benchmarks/results/`.
+
 ## Quick Start
 
 Run the synthetic end-to-end example from the repository root:
