@@ -287,7 +287,6 @@ artifacts/    local run outputs, ignored except .gitkeep
 - CI builds native C++, sanitizer C++, and optional Python binding jobs on Ubuntu.
 - `PROJECT_SPEC.md` and local build/artifact outputs are intentionally ignored and are not required for public builds.
 - `LICENSE` contains the MIT license.
-- Recommended initial release tag after Phase 14 approval: `v0.1.0`.
 
 ## Limitations
 
@@ -295,4 +294,4 @@ artifacts/    local run outputs, ignored except .gitkeep
 - The demo strategy is deterministic infrastructure coverage, not a profitability claim.
 - Market impact, hidden liquidity, exchange-specific matching, leverage, margin, and risk limits are not modeled.
 - Python bindings expose orchestration and result inspection only.
-- The current core replay is single-threaded. Phase 15 multithreading is optional future work and has not been started.
+- The current core replay is single-threaded.
