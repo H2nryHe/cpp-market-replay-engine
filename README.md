@@ -24,7 +24,7 @@ claim exact L3/FIFO queue reconstruction from L2 data, or optimize a strategy fo
 ## Quick Start
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/H2nryHe/cpp-market-replay-engine.git
 cd cpp-market-replay-engine
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
