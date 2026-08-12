@@ -30,6 +30,16 @@ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
 ```
 
+Optional Python binding build:
+
+```bash
+python3 -m pip install pybind11
+cmake -S . -B build-python -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_BINDINGS=ON \
+  -Dpybind11_DIR="$(python3 -c 'import pybind11; print(pybind11.get_cmake_dir())')"
+cmake --build build-python
+ctest --test-dir build-python --output-on-failure
+```
+
 ## Benchmarks
 
 Performance baselines are measured only with Release binaries:
@@ -61,6 +71,12 @@ The command prints a compact deterministic summary and writes:
 `--force` replaces an existing artifact directory. Without `--force`, the CLI refuses to overwrite a directory that
 already contains run artifacts.
 
+Python users can run the same C++ engine through the optional `market_replay` module:
+
+```bash
+PYTHONPATH=build-python python3 examples/python_replay.py
+```
+
 ## CLI
 
 ```bash
@@ -91,6 +107,40 @@ initial_cash=0
 `strategy_type=queue_imbalance` uses the demo Queue Imbalance strategy. `strategy_type=scripted` is used by the
 synthetic golden fixture to force a compact, manually verifiable integration scenario without changing the demo
 strategy.
+
+## Python Binding
+
+`BUILD_PYTHON_BINDINGS=ON` builds a pybind11 extension named `market_replay`. The binding is intentionally thin: Python
+constructs or loads a `ReplayConfig`, then calls the authoritative C++ `ReplayEngine`.
+
+```python
+import market_replay
+
+config = market_replay.ReplayConfig.from_file("configs/example_config.kv")
+result = market_replay.ReplayEngine(config).run()
+
+print(result.processed_event_count)
+print(result.ending_inventory)
+print(result.final_book_hash)
+print(result.run_hash)
+```
+
+Artifact-writing uses the same C++ path as the CLI:
+
+```python
+result = market_replay.run_config_file(
+    "configs/example_config.kv",
+    "artifacts/python_example_run",
+    True,
+)
+```
+
+Canonical accounting, timestamps, quantities, prices, fees, and hashes are exposed as exact Python `int` or `str`
+values. Optional C++ values, such as unavailable marks, are exposed as `None`. `orders` and `fills` are Python-owned
+read-only snapshots of the C++ run result; mutating them does not mutate engine state.
+
+The binding does not provide Python strategy callbacks, Python-side replay loops, or alternate accounting/order-book
+implementations.
 
 ## Input Format
 
@@ -207,4 +257,5 @@ Expected artifacts are checked in under `tests/golden/expected_*`.
 - Passive fills from L2 data are queue-depth approximations, not exact FIFO/L3 reconstruction.
 - Exchange-specific matching rules, hidden liquidity, iceberg behavior, maker/taker fee differences, market impact,
   margin, leverage, risk limits, and multi-asset allocation are not modeled.
-- Benchmarking, profiling, performance optimization, Python bindings, and multithreading are future phases.
+- Python bindings expose orchestration and result inspection only; custom Python strategies and multithreading are not
+  implemented.

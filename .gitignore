@@ -15,6 +15,10 @@ compile_commands.json
 *.exe
 *.out
 *.log
+*.pyc
+__pycache__/
+.venv/
+venv/
 .DS_Store
 artifacts/*
 !artifacts/.gitkeep

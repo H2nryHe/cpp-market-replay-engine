@@ -1,7 +1,7 @@
 # Project Status
 
 ## Current phase
-Phase 12A - Trace Hot-Path / Replay Observability Refactor
+Phase 13 - Python Binding with pybind11
 
 ## Phase status
 PASS
@@ -13,11 +13,14 @@ fbfb48f
 - Debug: PASS
 - Release: PASS
 - ASan/UBSan: PASS
+- Python binding Release: PASS
+- Python binding ASan/UBSan: BUILD PASS; Python import test unsupported by this macOS/Xcode Python sanitizer loader
 
 ## Tests
 - CTest Debug: 18/18 passed
 - CTest Release: 18/18 passed
 - CTest ASan/UBSan: 18/18 passed
+- CTest Release with Python bindings: 19/19 passed
 - Canonical trace exact-byte fixture: PASS
 - Trace hash equality fixture: PASS
 - Same-timestamp market-before-internal ordering: PASS
@@ -28,10 +31,18 @@ fbfb48f
 - Phase 10 golden final book hash: PASS, `9ca1786003897355`
 - Phase 10 golden run hash: PASS, `8aca37583ca6f83a`
 - ReplayEngine 100-run determinism regression: PASS through CTest
+- Python import: PASS, `market_replay.__version__ == "0.1.0"`
+- Python golden API equivalence: PASS, final book hash `9ca1786003897355`, run hash `8aca37583ca6f83a`
+- CLI vs Python artifact equivalence: PASS, `diff -r` reported no differences
+- Python 100-run determinism regression: PASS through `python_bindings_tests`
+- Python same-content different-path regression: PASS through `python_bindings_tests`
+- Python invalid config, missing input, output-exists, optional mark `None`, exact integer fields, order/fill access, and
+  failed-run recovery checks: PASS through `python_bindings_tests`
 
 ## Benchmarks
 Phase 12A retained. Optimized 1M hot replay median: 36,647,096.995 events/sec, 27.287 ns/event.
 Frozen Phase 11 baseline: 24,639,240.859 events/sec, 40.586 ns/event.
+Phase 13 Release 1M regression check: PASS, 37,365,193.388 events/sec, 26.763 ns/event.
 
 ## Completed phases
 - Phase 0 - PASS
@@ -46,7 +57,73 @@ Frozen Phase 11 baseline: 24,639,240.859 events/sec, 40.586 ns/event.
 - Phase 9 - PASS
 - Phase 10 - PASS
 - Phase 11 - PASS
-- Phase 12A - PASS
+- Phase 12 - PASS (Phase 12A optimization)
+- Phase 13 - PASS
+
+## Phase 13 implementation summary
+- Added an optional pybind11 extension target that imports as `market_replay`.
+- Kept the default C++ build independent of Python by gating the extension behind `BUILD_PYTHON_BINDINGS`.
+- Bound a thin Python API over the existing C++ `ReplayConfig`, `ReplayEngine::run()`, and
+  `run_replay_from_config_file()` paths.
+- Exposed Python-owned value snapshots for result, order, and fill data; Python does not receive mutable references to
+  engine-owned vectors.
+- Exposed canonical accounting, tick, quantity, timestamp, fee, and hash fields as exact Python integer/string values.
+- Exposed unavailable optional mark/equity values as Python `None`.
+- Added `examples/python_replay.py`.
+- Updated README with build, import, example, integer/optional behavior, and limitations.
+- Did not add Python strategy callbacks, Python replay loops, alternate accounting/order-book logic, multithreading, or
+  production performance optimizations.
+
+## Phase 13 pybind11 design
+- Authoritative implementation remains the C++ replay engine.
+- `market_replay.ReplayConfig.from_file(path)` calls existing `load_replay_config`.
+- Typed `ReplayConfig()` construction maps to existing C++ config fields and validation where setters have immediate
+  validation; full semantic validation still occurs in `ReplayEngine(config)`.
+- `market_replay.ReplayEngine(config).run()` executes existing C++ replay and returns a snapshot `ReplayResult`.
+- `market_replay.run_config_file(config_path, output_override=None, force_output=False)` uses the same C++ artifact path
+  as the CLI.
+- The binding releases the GIL only around C++ replay execution, with no Python callbacks involved.
+
+## Phase 13 Python API
+- Module: `market_replay`.
+- Config: `ReplayConfig`, `ReplayConfig.from_file`, `load_config`, `canonical_config`.
+- Engine: `ReplayEngine(config).run()`.
+- Artifact path: `run_config_file(config_path, output_override=None, force_output=False)`.
+- Enums: `Side`, `OrderType`, `OrderStatus`, `PriceFieldFormat`.
+- Typed scripted config helpers: `EventKey`, `ScriptedIntent`.
+- Result fields include event counts, order/fill counts, orders, fills, inventory, cash, realized PnL, fees, turnover,
+  optional mark/equity fields, final book hash, and run hash.
+
+## Phase 13 files changed
+- `.gitignore`
+- `CMakeLists.txt`
+- `README.md`
+- `examples/python_replay.py`
+- `python/bindings.cpp`
+- `tests/python/test_python_bindings.py`
+- `STATUS.md`
+
+## Phase 13 benchmark regression check
+- Required baseline: Phase 12A 1M `core_preloaded_replay`, 36,647,096.995 events/sec, 27.287 ns/event.
+- Phase 13 measurement: 37,365,193.388 events/sec, 26.763 ns/event.
+- Result: PASS; no material regression observed.
+- Final mutating benchmark hash for `core_preloaded_replay`: `2855ca09d92eee1f`.
+
+## Phase 13 environment
+- Date: 2026-08-12.
+- Python: `Python 3.9.6`.
+- pybind11: `3.1.0`.
+- pybind11 CMake directory used for verification:
+  `/tmp/cpp_market_replay_pydeps/pybind11/share/cmake/pybind11`.
+
+## Phase 13 known limitations
+- Python bindings require pybind11 to be available at configure time when `BUILD_PYTHON_BINDINGS=ON`.
+- Python bindings expose replay orchestration and result inspection only; Python strategy callbacks are not implemented.
+- The Python API does not provide a separate order book, market feed, parser, execution simulator, or portfolio
+  implementation.
+- ASan/UBSan Python-extension import was attempted but is unsupported in this environment because Apple’s Python loader
+  rejected the ASan runtime with `Sanitizer load violates platform policy`. The same sanitizer configuration passed the
+  18 C++ CTest tests.
 
 ## Phase 12A hypothesis
 - Phase 11 showed substantial full replay overhead beyond direct `OrderBook::apply()` timing.
@@ -157,7 +234,7 @@ Frozen Phase 11 baseline: 24,639,240.859 events/sec, 40.586 ns/event.
 - Portfolio does not enforce margin, leverage, capital constraints, risk limits, or multi-asset allocation.
 - Strategy performance statistics such as Sharpe, Sortino, volatility, alpha, beta, drawdown, win rate, and return series
   are not implemented.
-- Market impact, Python bindings, multithreading, and further performance optimization are not implemented.
+- Market impact, Python strategy callbacks, multithreading, and further performance optimization are not implemented.
 
 ## Remaining optimization candidates
 - Canonical trace materialization cost, now measured separately.
@@ -167,9 +244,119 @@ Frozen Phase 11 baseline: 24,639,240.859 events/sec, 40.586 ns/event.
 - Parser/artifact I/O measurements outside the core replay path.
 
 ## Next phase
-Phase 12B has not been started.
+Phase 14 has not been started.
 
-## Verification commands
+## Phase 13 verification commands
+```bash
+$ sed -n '1,260p' attached Phase 13 request
+Result: PASS - Phase 13 request read.
+
+$ sed -n '261,560p' attached Phase 13 request
+Result: PASS - Phase 13 request read completely.
+
+$ sed -n '1,450p' PROJECT_SPEC.md
+Result: PASS - spec read started.
+
+$ sed -n '451,900p' PROJECT_SPEC.md
+Result: PASS - spec read continued.
+
+$ sed -n '901,1350p' PROJECT_SPEC.md
+Result: PASS - spec read continued.
+
+$ sed -n '1351,1800p' PROJECT_SPEC.md
+Result: PASS - spec read continued.
+
+$ sed -n '1801,2250p' PROJECT_SPEC.md
+Result: PASS - spec read continued.
+
+$ sed -n '2251,2800p' PROJECT_SPEC.md
+Result: PASS - spec read completed.
+
+$ sed -n '1,340p' STATUS.md
+Result: PASS - STATUS read before changes.
+
+$ PYTHONPATH=/tmp/cpp_market_replay_pydeps python3 -c "import pybind11; print(pybind11.__version__); print(pybind11.get_cmake_dir())"
+Result: FAIL before dependency install - `ModuleNotFoundError: No module named 'pybind11'`.
+
+$ python3 -m pip install --target /tmp/cpp_market_replay_pydeps pybind11
+Result: FAIL under sandbox network restriction - DNS resolution failed for PyPI.
+
+$ python3 -m pip install --target /tmp/cpp_market_replay_pydeps pybind11
+Result: PASS with approved escalation - installed pybind11 3.1.0 into `/tmp/cpp_market_replay_pydeps`.
+
+$ PYTHONPATH=/tmp/cpp_market_replay_pydeps python3 -c "import pybind11; print(pybind11.__version__); print(pybind11.get_cmake_dir())"
+Result: PASS - pybind11 3.1.0; CMake dir `/tmp/cpp_market_replay_pydeps/pybind11/share/cmake/pybind11`.
+
+$ cmake -S . -B build-python -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_BINDINGS=ON -Dpybind11_DIR="$(PYTHONPATH=/tmp/cpp_market_replay_pydeps python3 -c 'import pybind11; print(pybind11.get_cmake_dir())')"
+Result: PASS - Python binding Release configure.
+
+$ cmake --build build-python
+Result: PASS - Python binding Release build.
+
+$ ctest --test-dir build-python --output-on-failure
+Result: PASS - Python binding Release CTest passed 19/19 tests.
+
+$ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+Result: PASS - Debug configure.
+
+$ cmake --build build
+Result: PASS - Debug build.
+
+$ ctest --test-dir build --output-on-failure
+Result: PASS - Debug CTest passed 18/18 tests.
+
+$ cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON
+Result: PASS - ASan/UBSan configure.
+
+$ cmake --build build-asan
+Result: PASS - ASan/UBSan build.
+
+$ ctest --test-dir build-asan --output-on-failure
+Result: PASS - ASan/UBSan CTest passed 18/18 tests.
+
+$ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+Result: PASS - Release configure.
+
+$ cmake --build build-release
+Result: PASS - Release build.
+
+$ ctest --test-dir build-release --output-on-failure
+Result: PASS - Release CTest passed 18/18 tests.
+
+$ PYTHONPATH=build-python python3 -c "import market_replay; print(market_replay.__version__)"
+Result: PASS - imported `market_replay`, version `0.1.0`.
+
+$ PYTHONPATH=build-python python3 examples/python_replay.py
+Result: PASS - final book hash `9ca1786003897355`; run hash `8aca37583ca6f83a`.
+
+$ ./build-release/benchmark_replay --output-dir build/phase13_benchmark --scales 1000000 --repetitions 5 --warmups 1
+Result: PASS - 1M `core_preloaded_replay` median 37,365,193.388 events/sec, 26.763 ns/event; hash
+`2855ca09d92eee1f`.
+
+$ ./build-release/replay_cli --config configs/example_config.kv --output build/phase13_cli_equiv --force
+Result: PASS - final book hash `9ca1786003897355`; run hash `8aca37583ca6f83a`.
+
+$ PYTHONPATH=build-python python3 -c "import market_replay; r = market_replay.run_config_file('configs/example_config.kv', 'build/phase13_python_equiv', True); print(r.final_book_hash); print(r.run_hash)"
+Result: PASS - final book hash `9ca1786003897355`; run hash `8aca37583ca6f83a`.
+
+$ diff -r build/phase13_cli_equiv build/phase13_python_equiv
+Result: PASS - no differences.
+
+$ python3 --version
+Result: PASS - `Python 3.9.6`.
+
+$ cmake -S . -B build-python-asan -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON -DBUILD_PYTHON_BINDINGS=ON -Dpybind11_DIR="$(PYTHONPATH=/tmp/cpp_market_replay_pydeps python3 -c 'import pybind11; print(pybind11.get_cmake_dir())')"
+Result: PASS - Python binding ASan/UBSan configure.
+
+$ cmake --build build-python-asan
+Result: PASS - Python binding ASan/UBSan build.
+
+$ ctest --test-dir build-python-asan --output-on-failure
+Result: PARTIAL/UNSUPPORTED - 18/19 tests passed; `python_bindings_tests` failed at import because this macOS/Xcode
+Python loader rejected the ASan runtime with `Sanitizer load violates platform policy`.
+```
+
+## Phase 12A verification commands
 ```bash
 $ sed -n '1,260p' attached Phase 12A request
 Result: PASS - Phase 12A request read.

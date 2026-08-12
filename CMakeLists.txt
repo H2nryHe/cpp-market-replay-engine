@@ -8,6 +8,7 @@ project(
 )
 
 option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer when supported" OFF)
+option(BUILD_PYTHON_BINDINGS "Build the optional pybind11 Python extension" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,6 +42,7 @@ target_include_directories(market_replay
 )
 
 target_compile_features(market_replay PUBLIC cxx_std_20)
+set_target_properties(market_replay PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 function(replay_apply_warnings target_name)
   if(MSVC)
@@ -245,4 +247,28 @@ if(BUILD_TESTING)
 
   add_test(NAME benchmark_replay_self_test COMMAND benchmark_replay --self-test)
   set_tests_properties(benchmark_replay_self_test PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+if(BUILD_PYTHON_BINDINGS)
+  find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+  find_package(pybind11 CONFIG REQUIRED)
+
+  pybind11_add_module(market_replay_py
+    python/bindings.cpp
+  )
+
+  set_target_properties(market_replay_py PROPERTIES OUTPUT_NAME market_replay)
+  target_link_libraries(market_replay_py PRIVATE market_replay::market_replay)
+  replay_apply_warnings(market_replay_py)
+  replay_apply_sanitizers(market_replay_py)
+
+  if(BUILD_TESTING)
+    add_test(NAME python_bindings_tests
+      COMMAND ${Python3_EXECUTABLE} tests/python/test_python_bindings.py
+    )
+    set_tests_properties(python_bindings_tests PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:market_replay_py>"
+    )
+  endif()
 endif()
