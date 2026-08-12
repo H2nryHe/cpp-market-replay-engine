@@ -4,6 +4,7 @@
 #include "replay/replay_engine.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -57,6 +58,61 @@ std::string hex64(std::uint64_t value) {
   std::ostringstream os;
   os << std::hex << std::setfill('0') << std::setw(16) << value;
   return os.str();
+}
+
+void checksum_mix(std::uint64_t& checksum, std::uint64_t value) noexcept {
+  checksum ^= value + 0x9e3779b97f4a7c15ULL + (checksum << 6U) + (checksum >> 2U);
+}
+
+std::uint64_t side_checksum_value(replay::Side side) {
+  switch (side) {
+    case replay::Side::Buy:
+      return 1;
+    case replay::Side::Sell:
+      return 2;
+  }
+  throw std::invalid_argument("invalid Side");
+}
+
+std::uint64_t event_iteration_checksum(const std::vector<replay::MarketEvent>& events) {
+  std::uint64_t checksum = 0xcbf29ce484222325ULL;
+  const replay::MarketEvent* volatile observed_event = nullptr;
+  std::size_t index = 0;
+  for (const auto& event : events) {
+    observed_event = &event;
+    checksum_mix(checksum, static_cast<std::uint64_t>(index));
+    ++index;
+  }
+  static_cast<void>(observed_event);
+  return checksum;
+}
+
+std::uint64_t event_dispatch_checksum(const std::vector<replay::MarketEvent>& events) {
+  std::uint64_t checksum = 0x84222325cbf29ce4ULL;
+  for (const auto& event : events) {
+    const auto key = event.key();
+    checksum_mix(checksum, key.timestamp_ns);
+    checksum_mix(checksum, key.sequence_id);
+    switch (event.type()) {
+      case replay::MarketEventType::BookUpdate: {
+        const auto& update = event.book_update();
+        checksum_mix(checksum, 1);
+        checksum_mix(checksum, side_checksum_value(update.side));
+        checksum_mix(checksum, static_cast<std::uint64_t>(update.price_ticks));
+        checksum_mix(checksum, static_cast<std::uint64_t>(update.quantity));
+        break;
+      }
+      case replay::MarketEventType::Trade: {
+        const auto& trade = event.trade();
+        checksum_mix(checksum, 2);
+        checksum_mix(checksum, static_cast<std::uint64_t>(trade.price_ticks));
+        checksum_mix(checksum, static_cast<std::uint64_t>(trade.quantity));
+        checksum_mix(checksum, trade.aggressor_side ? side_checksum_value(*trade.aggressor_side) : 0);
+        break;
+      }
+    }
+  }
+  return checksum;
 }
 
 std::uint64_t elapsed_ns(Clock::time_point begin, Clock::time_point end) {
@@ -243,6 +299,20 @@ BenchmarkRow run_order_book_once(const std::vector<replay::BookUpdateEvent>& upd
   return make_row("order_book_apply", updates.size(), repetition, elapsed_ns(begin, end), hex64(book.state_hash()));
 }
 
+BenchmarkRow run_bare_event_iteration_once(const std::vector<replay::MarketEvent>& events, std::size_t repetition) {
+  const auto begin = Clock::now();
+  const auto checksum = event_iteration_checksum(events);
+  const auto end = Clock::now();
+  return make_row("bare_event_iteration", events.size(), repetition, elapsed_ns(begin, end), hex64(checksum));
+}
+
+BenchmarkRow run_event_dispatch_once(const std::vector<replay::MarketEvent>& events, std::size_t repetition) {
+  const auto begin = Clock::now();
+  const auto checksum = event_dispatch_checksum(events);
+  const auto end = Clock::now();
+  return make_row("event_type_dispatch_only", events.size(), repetition, elapsed_ns(begin, end), hex64(checksum));
+}
+
 BenchmarkRow run_core_replay_once(const std::vector<replay::MarketEvent>& events, std::size_t repetition) {
   auto run_events = events;
   replay::OrderBook book;
@@ -368,6 +438,12 @@ void run_self_test() {
   if (book_hash_for_events(events_a) != book_hash_for_events(events_b)) {
     throw std::runtime_error("market event generator is non-deterministic");
   }
+  if (event_iteration_checksum(events_a) != event_iteration_checksum(events_b)) {
+    throw std::runtime_error("bare event checksum is non-deterministic");
+  }
+  if (event_dispatch_checksum(events_a) != event_dispatch_checksum(events_b)) {
+    throw std::runtime_error("event dispatch checksum is non-deterministic");
+  }
 }
 
 }  // namespace
@@ -395,6 +471,30 @@ int main(int argc, char** argv) {
       });
 
       const auto events = generate_market_events(scale);
+      const auto expected_iteration_checksum = hex64(event_iteration_checksum(events));
+      run_repeated(rows,
+                   options.warmups,
+                   options.repetitions,
+                   [&events, &expected_iteration_checksum](std::size_t repetition) {
+                     auto row = run_bare_event_iteration_once(events, repetition);
+                     if (row.final_state_hash != expected_iteration_checksum) {
+                       throw std::runtime_error("bare event iteration checksum mismatch");
+                     }
+                     return row;
+                   });
+
+      const auto expected_dispatch_checksum = hex64(event_dispatch_checksum(events));
+      run_repeated(rows,
+                   options.warmups,
+                   options.repetitions,
+                   [&events, &expected_dispatch_checksum](std::size_t repetition) {
+                     auto row = run_event_dispatch_once(events, repetition);
+                     if (row.final_state_hash != expected_dispatch_checksum) {
+                       throw std::runtime_error("event dispatch checksum mismatch");
+                     }
+                     return row;
+                   });
+
       const auto expected_event_hash = book_hash_for_events(events);
       run_repeated(rows, options.warmups, options.repetitions, [&events, &expected_event_hash](std::size_t repetition) {
         auto row = run_core_replay_once(events, repetition);
