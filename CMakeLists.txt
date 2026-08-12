@@ -43,6 +43,7 @@ target_include_directories(market_replay
 
 target_compile_features(market_replay PUBLIC cxx_std_20)
 set_target_properties(market_replay PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_definitions(market_replay PRIVATE REPLAY_ENGINE_VERSION="${PROJECT_VERSION}")
 
 function(replay_apply_warnings target_name)
   if(MSVC)
@@ -208,12 +209,13 @@ if(BUILD_TESTING)
   set_tests_properties(replay_cli_help PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_test(NAME replay_cli_example
-    COMMAND replay_cli --config configs/example_config.kv --output build/ctest_example_run --force
+    COMMAND replay_cli --config configs/example_config.kv --output ${CMAKE_CURRENT_BINARY_DIR}/ctest_example_run --force
   )
   set_tests_properties(replay_cli_example PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_test(NAME replay_cli_invalid_config
-    COMMAND replay_cli --config tests/golden/e2e_invalid_config.kv --output build/invalid_config_run --force
+    COMMAND replay_cli --config tests/golden/e2e_invalid_config.kv
+            --output ${CMAKE_CURRENT_BINARY_DIR}/invalid_config_run --force
   )
   set_tests_properties(replay_cli_invalid_config PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -221,7 +223,8 @@ if(BUILD_TESTING)
   )
 
   add_test(NAME replay_cli_missing_input
-    COMMAND replay_cli --config tests/golden/e2e_missing_input_config.kv --output build/missing_input_run --force
+    COMMAND replay_cli --config tests/golden/e2e_missing_input_config.kv
+            --output ${CMAKE_CURRENT_BINARY_DIR}/missing_input_run --force
   )
   set_tests_properties(replay_cli_missing_input PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -237,7 +240,7 @@ if(BUILD_TESTING)
   )
 
   add_test(NAME replay_cli_output_exists_refuses
-    COMMAND replay_cli --config configs/example_config.kv --output build/ctest_example_run
+    COMMAND replay_cli --config configs/example_config.kv --output ${CMAKE_CURRENT_BINARY_DIR}/ctest_example_run
   )
   set_tests_properties(replay_cli_output_exists_refuses PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

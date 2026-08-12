@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  native:
+    name: Native C++ Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: CLI help
+        run: ./build/replay_cli --help
+
+      - name: Golden example hashes
+        run: |
+          ./build/replay_cli --config configs/example_config.kv --output build/ci_example_run --force | tee build/ci_example_output.txt
+          grep -q "Final book hash:       9ca1786003897355" build/ci_example_output.txt
+          grep -q "Run hash:              8aca37583ca6f83a" build/ci_example_output.txt
+
+  sanitizers:
+    name: Native C++ ASan/UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON
+
+      - name: Build
+        run: cmake --build build-asan --parallel 2
+
+      - name: Test
+        run: ctest --test-dir build-asan --output-on-failure
+
+  python:
+    name: Python Binding
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install pybind11
+        run: python -m pip install pybind11
+
+      - name: Configure
+        run: |
+          PYBIND11_DIR="$(python -c 'import pybind11; print(pybind11.get_cmake_dir())')"
+          cmake -S . -B build-python -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_BINDINGS=ON -Dpybind11_DIR="${PYBIND11_DIR}"
+
+      - name: Build
+        run: cmake --build build-python --parallel 2
+
+      - name: CTest
+        run: ctest --test-dir build-python --output-on-failure
+
+      - name: Import and example
+        run: |
+          PYTHONPATH=build-python python -c "import market_replay; assert market_replay.__version__ == '0.1.0'"
+          PYTHONPATH=build-python python examples/python_replay.py | tee build-python/python_example_output.txt
+          grep -q "final_book_hash=9ca1786003897355" build-python/python_example_output.txt
+          grep -q "run_hash=8aca37583ca6f83a" build-python/python_example_output.txt

@@ -2,7 +2,9 @@
 
 Phase 6 added execution-domain orders, fills, market execution, and deterministic fees. Phase 7 integrated market-order execution with the deterministic event scheduler so strategy decisions become pending orders and execute only at exchange arrival time. Phase 8 adds marketable limit orders, resting simulated limit orders, deterministic cancels, partial passive fills, and an explicit L2 queue-depth approximation.
 
-This phase does not implement portfolio accounting, PnL, exact FIFO/L3 queue reconstruction, exchange matching-engine emulation, market impact, hidden-liquidity modeling, stochastic fills, benchmark optimization, Python bindings, or multithreading.
+The execution model does not claim exact FIFO/L3 queue reconstruction, exchange matching-engine emulation, market
+impact, hidden-liquidity modeling, stochastic fills, or multithreading. Portfolio accounting and the optional Python
+binding are separate layers over the same C++ execution core.
 
 ## OrderIntent vs Order
 

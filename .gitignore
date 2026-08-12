@@ -24,3 +24,4 @@ artifacts/*
 !artifacts/.gitkeep
 benchmarks/results/e2e_repetition_*/
 PROJECT_SPEC.md
+*_PROJECT_SPEC.md

@@ -60,6 +60,7 @@ void remove_path(const std::filesystem::path& path) {
 }
 
 replay::ReplayRunResult run_example(const std::filesystem::path& output) {
+  std::filesystem::create_directories(output.parent_path());
   return replay::run_replay_from_config_file("configs/example_config.kv", output, true);
 }
 

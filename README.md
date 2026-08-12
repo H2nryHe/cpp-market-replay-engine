@@ -1,65 +1,57 @@
 # cpp-market-replay-engine
 
-Deterministic C++20 market-data replay engine for normalized L2 book updates and trades. The engine reconstructs a
-historical visible order book, dispatches strategy callbacks, routes orders through latency-aware execution, applies
-market/limit/passive fills, updates portfolio accounting from fills, and writes reproducible run artifacts.
+Deterministic C++20 event-driven market replay and execution engine for normalized L2 book updates and trades. It
+reconstructs visible order books, preserves causal event ordering, routes strategy intents through latency-aware
+market/limit execution, applies an explicit L2 passive-fill approximation, maintains FIFO portfolio accounting, and
+writes reproducible artifacts.
 
-This is a simulation and infrastructure project. It does not connect to live exchanges, claim exact L3/FIFO queue
-reconstruction from L2 data, or optimize a strategy for profitability.
+## Highlights
 
-## Build And Test
+- C++20 event-driven replay core with CMake and CTest.
+- Deterministic L2 order-book reconstruction with integer tick prices.
+- Timestamp plus sequence ordering for same-timestamp market events.
+- Latency-aware market and limit order lifecycle.
+- Passive fills from L2 queue-depth approximation, not exact FIFO/L3 reconstruction.
+- FIFO portfolio accounting for cash, inventory, fees, turnover, realized PnL, and exact half-tick marks.
+- Reproducible run artifacts and golden hashes.
+- pybind11 `market_replay` Python interface for research orchestration over the C++ core.
+- Measured 1.49x replay hot-path optimization: 24.64M to 36.65M events/sec.
+- Current documented 1M-event single-threaded core benchmark: 36.6M events/sec, 27.287 ns/event.
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
-
-Optional sanitizer build where supported:
-
-```bash
-cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON
-cmake --build build-asan
-ctest --test-dir build-asan --output-on-failure
-```
-
-Release build:
-
-```bash
-cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release
-```
-
-Optional Python binding build:
-
-```bash
-python3 -m pip install pybind11
-cmake -S . -B build-python -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_BINDINGS=ON \
-  -Dpybind11_DIR="$(python3 -c 'import pybind11; print(pybind11.get_cmake_dir())')"
-cmake --build build-python
-ctest --test-dir build-python --output-on-failure
-```
-
-## Benchmarks
-
-Performance baselines are measured only with Release binaries:
-
-```bash
-./build-release/benchmark_replay --output-dir benchmarks/results --scales 100000,1000000 --repetitions 5 --warmups 1
-```
-
-The current Phase 11 methodology and measured single-threaded baseline are documented in `docs/benchmarks.md`. The
-small public CSV summaries live in `benchmarks/results/`.
+This is a simulation and infrastructure project. It does not connect to live exchanges, emulate exact exchange matching,
+claim exact L3/FIFO queue reconstruction from L2 data, or optimize a strategy for profitability.
 
 ## Quick Start
 
-Run the synthetic end-to-end example from the repository root:
-
 ```bash
+git clone <repo-url>
+cd cpp-market-replay-engine
+
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
+
 ./build/replay_cli --config configs/example_config.kv --output artifacts/example_run --force
 ```
 
-The command prints a compact deterministic summary and writes:
+Expected synthetic example summary:
+
+```text
+Events processed:      5
+Book updates:          3
+Trades:                2
+Orders submitted:      2
+Fills:                 3
+Ending inventory:      5
+Realized gross PnL:    0
+Unrealized gross PnL:  2 x2
+Fees:                  5
+Ending equity:         -8 x2
+Final book hash:       9ca1786003897355
+Run hash:              8aca37583ca6f83a
+```
+
+The run writes deterministic artifacts:
 
 - `run_manifest.json`
 - `orders.csv`
@@ -68,50 +60,96 @@ The command prints a compact deterministic summary and writes:
 - `portfolio_summary.json`
 - `metrics.json`
 
-`--force` replaces an existing artifact directory. Without `--force`, the CLI refuses to overwrite a directory that
-already contains run artifacts.
+Without `--force`, the CLI refuses to overwrite an existing artifact directory that already contains run artifacts.
 
-Python users can run the same C++ engine through the optional `market_replay` module:
-
-```bash
-PYTHONPATH=build-python python3 examples/python_replay.py
-```
-
-## CLI
-
-```bash
-replay_cli --config <path> [--output <directory>] [--force]
-replay_cli --help
-```
-
-The config file is deterministic `key=value` text. Paths are interpreted relative to the current working directory.
-`--output` overrides `output_directory` from the config.
-
-Example:
+## Architecture
 
 ```text
-book_updates_path=tests/golden/e2e_book_updates.csv
-trades_path=tests/golden/e2e_trades.csv
-output_directory=artifacts/example_run
-tick_size=0.01
-price_format=ticks
-strategy_type=scripted
-scripted_intents=100:2:buy:market:3:;200:3:buy:limit:6:10000
-order_latency_ns=50
-cancel_after_arrival_ns=100
-queue_fraction_ppm=500000
-fee_rate_ppm=100
-initial_cash=0
+Market Feed
+   |
+   v
+Deterministic Event Loop
+   |
+   v
+Historical L2 OrderBook
+   |
+   v
+Strategy
+   |
+   v
+OrderIntent
+   |
+   v
+Latency-aware Execution
+   |
+   v
+Aggressive / Passive Fill
+   |
+   v
+Portfolio
+   |
+   v
+Artifacts
 ```
 
-`strategy_type=queue_imbalance` uses the demo Queue Imbalance strategy. `strategy_type=scripted` is used by the
-synthetic golden fixture to force a compact, manually verifiable integration scenario without changing the demo
-strategy.
+Python is a thin orchestration layer over the same authoritative C++ implementation:
+
+```text
+Python research/orchestration
+           |
+           v
+       ReplayEngine
+           |
+           v
+        C++ core
+```
+
+Detailed architecture notes are in `docs/architecture.md`.
+
+## Build And Test
+
+Debug:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Release:
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release
+ctest --test-dir build-release --output-on-failure
+```
+
+ASan/UBSan where supported:
+
+```bash
+cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON
+cmake --build build-asan
+ctest --test-dir build-asan --output-on-failure
+```
+
+The project version is `0.1.0`, sourced from the CMake project version and exposed by the C++ and Python APIs.
 
 ## Python Binding
 
-`BUILD_PYTHON_BINDINGS=ON` builds a pybind11 extension named `market_replay`. The binding is intentionally thin: Python
-constructs or loads a `ReplayConfig`, then calls the authoritative C++ `ReplayEngine`.
+The optional binding builds a module named `market_replay`.
+
+```bash
+python3 -m pip install pybind11
+cmake -S . -B build-python -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_BINDINGS=ON \
+  -Dpybind11_DIR="$(python3 -c 'import pybind11; print(pybind11.get_cmake_dir())')"
+cmake --build build-python
+ctest --test-dir build-python --output-on-failure
+
+PYTHONPATH=build-python python3 -c "import market_replay; assert market_replay.__version__ == '0.1.0'"
+PYTHONPATH=build-python python3 examples/python_replay.py
+```
+
+Minimal Python usage:
 
 ```python
 import market_replay
@@ -125,22 +163,10 @@ print(result.final_book_hash)
 print(result.run_hash)
 ```
 
-Artifact-writing uses the same C++ path as the CLI:
+Canonical accounting, ticks, timestamps, quantities, fees, and hashes are exposed as exact Python `int` or `str` values.
+Unavailable optional marks are exposed as `None`. Orders and fills are Python-owned read-only snapshots.
 
-```python
-result = market_replay.run_config_file(
-    "configs/example_config.kv",
-    "artifacts/python_example_run",
-    True,
-)
-```
-
-Canonical accounting, timestamps, quantities, prices, fees, and hashes are exposed as exact Python `int` or `str`
-values. Optional C++ values, such as unavailable marks, are exposed as `None`. `orders` and `fills` are Python-owned
-read-only snapshots of the C++ run result; mutating them does not mutate engine state.
-
-The binding does not provide Python strategy callbacks, Python-side replay loops, or alternate accounting/order-book
-implementations.
+The binding does not provide Python strategy callbacks or Python-side replay/accounting/order-book implementations.
 
 ## Input Format
 
@@ -158,104 +184,115 @@ timestamp_ns,sequence_id,price,quantity,aggressor_side
 300,4,10000,7,sell
 ```
 
-`price_format=ticks` treats `price` as integer `PriceTicks`. `price_format=decimal` converts decimal prices using
-`tick_size`.
+`price_format=ticks` treats `price` as integer `PriceTicks`. `price_format=decimal` converts decimal prices through the
+documented exact tick conversion layer. Decimal prices that are not exact multiples of `tick_size` are rejected.
 
-## Architecture
+## Determinism And Correctness
 
-`ReplayEngine` is an orchestration layer. It composes existing components rather than collapsing them:
+Important invariants:
 
-```text
-NormalizedMarketFeed
-  -> EventLoop / SimulationClock
-  -> historical OrderBook
-  -> Strategy
-  -> LatencyAwareExecution
-  -> Fill
-  -> Portfolio
-  -> deterministic artifact writer
+- Market events are ordered by `TimestampNs` and deterministic `sequence_id`.
+- Historical market events precede same-timestamp internal events.
+- Simulated execution does not mutate the authoritative historical `OrderBook`.
+- Persistent hashes use canonical text and exclude local paths, output directories, timestamps, and usernames.
+- Half-tick portfolio marks are stored exactly in doubled units.
+- Arithmetic validates invalid values and checks overflow-sensitive accounting operations.
+- Golden regression preserves final book hash `9ca1786003897355` and run hash `8aca37583ca6f83a`.
+
+CTest covers unit, integration, golden, error-path, repeatability, sanitizer, benchmark smoke, and Python equivalence
+checks. Details are in `docs/determinism.md` and the component docs under `docs/`.
+
+## Performance
+
+Release benchmarks use the repository-native deterministic harness:
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release
+./build-release/benchmark_replay --output-dir benchmarks/results --scales 100000,1000000 --repetitions 5 --warmups 1
 ```
 
-Simulated orders do not mutate the historical `OrderBook`. Market data may mark an existing portfolio position, but
-only `Fill` records mutate cash, inventory, lots, fees, turnover, and realized gross PnL.
+Headline results are medians from five measured repetitions after one warmup on the same deterministic 1M-event
+single-threaded workload. `ns/event` is replay processing cost, not exchange, order, or network latency.
 
-## Artifacts
+| Scope | Events/sec | ns/event | Notes |
+|---|---:|---:|---|
+| Bare event iteration | 667,074,026.539 | 1.499 | No dispatch or book mutation |
+| Variant dispatch only | 97,203,380.967 | 10.288 | Event type/payload access only |
+| OrderBook apply | 46,414,838.935 | 21.545 | Direct book-update microbenchmark |
+| Phase 11 core replay baseline | 24,639,240.859 | 40.586 | Frozen pre-optimization baseline |
+| Phase 12A optimized core replay | 36,647,096.995 | 27.287 | Current documented hot replay baseline |
 
-`orders.csv` fields:
+Benchmark scopes differ and values are not additive. The `OrderBook apply` row applies direct book updates, while core
+replay includes mixed book/trade events and replay orchestration.
+
+The optimization story:
+
+- Phase 11 coarse decomposition showed significant replay orchestration/trace overhead beyond direct book mutation.
+- Phase 12A changed trace collection to compact typed records and deferred canonical trace materialization.
+- Hot replay throughput improved by 48.735%: 24.64M to 36.65M events/sec, a 1.487x improvement.
+- Canonical trace semantics, final book hash, and run hash remained unchanged.
+- Phase 13 measured 26.763 ns/event as a native regression check; it is documented as no material performance
+  regression, not as an additional optimization claim.
+
+Full methodology and CSV summaries are in `docs/benchmarks.md` and `benchmarks/results/`.
+
+## Execution Model Boundary
+
+Passive fills from L2 data use a queue-depth approximation and are not exact FIFO/L3 exchange reconstruction.
+
+The simulator does not model:
+
+- historical market impact from simulated orders;
+- hidden liquidity or iceberg behavior;
+- exchange-specific matching rules;
+- maker/taker fee differences;
+- margin, leverage, capital constraints, or risk limits;
+- live trading or exchange connectivity.
+
+See `docs/execution_model.md` for the exact passive-fill and latency rules.
+
+## Documentation Index
+
+- `docs/architecture.md`: component flow and Python/C++ boundary.
+- `docs/domain_types.md`: integer units, price conversion, enum parsing, event keys.
+- `docs/data_contract.md`: normalized CSV schema and parser policy.
+- `docs/order_book.md`: L2 book update semantics, state hashes, locked/crossed policy.
+- `docs/event_loop.md`: simulation clock, scheduler, event ordering, trace hashes.
+- `docs/strategy.md`: strategy callback API and queue-imbalance demo.
+- `docs/execution_model.md`: order lifecycle, latency, passive queue approximation.
+- `docs/accounting.md`: FIFO portfolio accounting and mark-to-market policy.
+- `docs/replay_engine.md`: config, artifacts, run manifest, hashing.
+- `docs/determinism.md`: deterministic ordering, canonical state, regression coverage.
+- `docs/benchmarks.md`: methodology, benchmark variants, measured results.
+
+## Repository Structure
 
 ```text
-order_id,side,order_type,original_quantity,filled_quantity,remaining_quantity,limit_price_ticks,
-decision_time_ns,submit_time_ns,exchange_arrival_time_ns,final_status
+include/      public C++ headers
+src/          C++ implementation
+apps/         replay_cli
+strategies/   demo queue-imbalance strategy
+python/       pybind11 binding
+tests/        unit, integration, golden, and Python tests
+benchmarks/   deterministic benchmark harness and public CSV summaries
+docs/         detailed design notes
+examples/     Python example
+configs/      public synthetic replay config
+artifacts/    local run outputs, ignored except .gitkeep
 ```
 
-`fills.csv` fields:
+## Development Notes
 
-```text
-fill_sequence_id,order_id,timestamp_ns,side,price_ticks,quantity,fee
-```
-
-`portfolio_summary.json` records initial cash, ending cash, signed inventory, realized gross PnL, unrealized gross PnL
-in doubled units when markable, total fees, net total PnL in doubled units when determinable, turnover, fill count,
-ending equity in doubled units, mark availability, and final `mid_x2`.
-
-`metrics.json` records operational counts only: market events, book updates, trades, internal events, strategy intents,
-orders by final status, and fills. It intentionally excludes benchmark throughput and performance analytics.
-
-`run_manifest.json` records engine version, input content hashes, canonical config hash, event/order/fill counts,
-portfolio summary values, final historical book hash, artifact hashes, and deterministic run hash.
-
-## Deterministic Hashing
-
-Persistent hashes use deterministic FNV-1a over explicit canonical text. They do not use `std::hash`, wall-clock
-timestamps, output directory names, absolute input paths, local usernames, or build directories.
-
-The canonical run hash is derived from:
-
-```text
-engine_version
-input_hash
-config_hash
-final_book_hash
-orders_hash
-fills_hash
-portfolio_hash
-metrics_hash
-```
-
-Input hashes are content hashes. Copying identical input data to a different path keeps the same input hash and, if
-configuration semantics are otherwise identical, the same run hash.
-
-## Final Mark Policy
-
-Final portfolio marking reuses the accounting policy:
-
-- valid two-sided non-crossed book: mark available using `mid_x2 = best_bid + best_ask`;
-- locked book: mark available;
-- empty, one-sided, or crossed book with nonzero inventory: mark unavailable;
-- flat inventory: cash-only equity remains determinable even without a midpoint.
-
-Half-tick values are preserved in doubled accounting units and are not truncated to integer ticks.
-
-## Synthetic Example
-
-The public golden fixture in `tests/golden/e2e_*.csv` exercises:
-
-- book updates and trades;
-- strategy callbacks and two order intents;
-- nonzero order latency;
-- one aggressive market fill;
-- one resting limit order with queue-ahead initialization;
-- passive partial fills from trade volume;
-- a same-timestamp trade/cancel race where the market event is processed first;
-- nonzero fees;
-- final portfolio accounting and mark-to-market.
-
-Expected artifacts are checked in under `tests/golden/expected_*`.
+- CI builds native C++, sanitizer C++, and optional Python binding jobs on Ubuntu.
+- `PROJECT_SPEC.md` and local build/artifact outputs are intentionally ignored and are not required for public builds.
+- `LICENSE` contains the MIT license.
+- Recommended initial release tag after Phase 14 approval: `v0.1.0`.
 
 ## Limitations
 
-- Passive fills from L2 data are queue-depth approximations, not exact FIFO/L3 reconstruction.
-- Exchange-specific matching rules, hidden liquidity, iceberg behavior, maker/taker fee differences, market impact,
-  margin, leverage, risk limits, and multi-asset allocation are not modeled.
-- Python bindings expose orchestration and result inspection only; custom Python strategies and multithreading are not
-  implemented.
+- The queue model is an L2 approximation, not exact FIFO.
+- The demo strategy is deterministic infrastructure coverage, not a profitability claim.
+- Market impact, hidden liquidity, exchange-specific matching, leverage, margin, and risk limits are not modeled.
+- Python bindings expose orchestration and result inspection only.
+- The current core replay is single-threaded. Phase 15 multithreading is optional future work and has not been started.
