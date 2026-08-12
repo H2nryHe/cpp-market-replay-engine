@@ -1,7 +1,7 @@
 # Project Status
 
 ## Current phase
-Phase 9 - Portfolio, PnL & Accounting
+Phase 10 - End-to-End Replay Engine, CLI & Artifacts
 
 ## Phase status
 PASS
@@ -15,10 +15,11 @@ PASS
 - ASan/UBSan: PASS
 
 ## Tests
-- CTest: 10/10 passed
-- CLI smoke: PASS
-- Phase 9 portfolio/accounting tests: PASS
-- Determinism: PASS for fixed fill accounting sequence repeated 100 times
+- CTest: 17/17 passed
+- CLI help: PASS
+- Public synthetic CLI example: PASS
+- Golden end-to-end replay: PASS
+- Determinism: PASS for 100 repeated end-to-end runs
 
 ## Benchmarks
 Not started
@@ -34,110 +35,125 @@ Not started
 - Phase 7 - PASS
 - Phase 8 - PASS
 - Phase 9 - PASS
+- Phase 10 - PASS
 
 ## Implementation summary
-- Added an independent `Portfolio` domain module driven only by `Fill` records.
-- Added deterministic FIFO open-lot accounting with long, short, partial close, full close, and position-flip support.
-- Added cash, signed inventory, open lots, realized gross PnL, gross unrealized PnL at mark, total fees, equity, net total PnL, turnover, fill count, and a simple deterministic fill ledger.
-- Added explicit mark-to-market using `OrderBook` doubled midpoint values.
-- Added checked integer accounting helpers using `__int128` intermediates and explicit checked conversion.
-- Added transactional fill application: invalid or overflowing fills fail explicitly and leave portfolio state unchanged.
-- Added `portfolio_tests` covering Phase 9 required cases A-AD.
-- Added `docs/accounting.md` documenting accounting units, FIFO behavior, mark policy, identities, overflow handling, duplicate fill policy, and limitations.
+- Added `ReplayEngine`, an application-level orchestrator for normalized feed -> event loop -> historical book -> strategy -> latency-aware execution -> fills -> portfolio -> artifacts.
+- Replaced the stub CLI with `replay_cli --config <path> [--output <directory>] [--force]`.
+- Added deterministic key=value replay config parsing and validation.
+- Added deterministic CSV/JSON artifact generation: `orders.csv`, `fills.csv`, `ledger.csv`, `portfolio_summary.json`, `metrics.json`, and `run_manifest.json`.
+- Added content-based input hashes, canonical config hash, artifact hashes, final book hash, and run hash.
+- Added safe output writing through a temporary directory and explicit overwrite refusal unless `--force` is supplied.
+- Added a public synthetic end-to-end fixture and exact golden expected artifacts.
+- Added integration and CLI CTest coverage for valid runs, golden outputs, exact counts, determinism, path-independent hashes, config sensitivity, missing/malformed input, invalid config, invalid output, overwrite refusal, empty feed, mark-unavailable behavior, conservation, and historical book immutability.
+- Updated README and added `docs/replay_engine.md`.
 
 ## Files changed
 - `CMakeLists.txt`
-- `include/replay/portfolio.hpp`
-- `src/portfolio.cpp`
-- `tests/unit/portfolio_test.cpp`
-- `docs/accounting.md`
+- `README.md`
+- `apps/replay_cli.cpp`
+- `include/replay/replay_engine.hpp`
+- `src/replay_engine.cpp`
+- `configs/example_config.kv`
+- `docs/replay_engine.md`
+- `tests/integration/replay_engine_test.cpp`
+- `tests/golden/e2e_book_updates.csv`
+- `tests/golden/e2e_trades.csv`
+- `tests/golden/e2e_empty_book_updates.csv`
+- `tests/golden/e2e_empty_trades.csv`
+- `tests/golden/e2e_one_sided_book_updates.csv`
+- `tests/golden/e2e_one_sided_trades.csv`
+- `tests/golden/e2e_invalid_config.kv`
+- `tests/golden/e2e_missing_input_config.kv`
+- `tests/golden/e2e_malformed_book_updates.csv`
+- `tests/golden/expected_orders.csv`
+- `tests/golden/expected_fills.csv`
+- `tests/golden/expected_ledger.csv`
+- `tests/golden/expected_portfolio_summary.json`
+- `tests/golden/expected_metrics.json`
+- `tests/golden/expected_run_manifest.json`
 - `STATUS.md`
 
-## Accounting numeric units
-- Prices use existing `PriceTicks`.
-- Quantities use existing `Quantity`.
-- Fees use existing `FeeAmount` from `Fill`.
-- Cash, realized gross PnL, turnover, and notional use `AccountingAmount`, a signed 64-bit integer in canonical `PriceTicks * Quantity` units.
-- Marked values that may contain half ticks use `AccountingAmountX2`, a signed 64-bit doubled accounting unit.
-- No `double` or `float` is used for canonical portfolio accounting state.
+## ReplayEngine/orchestration design
+- `ReplayEngine` composes existing components and keeps separation of concerns.
+- Market data are parsed as normalized book-update and trade feeds, then merged by deterministic `EventKey`.
+- The Phase 4 `EventLoop` applies book updates to the historical `OrderBook`, dispatches strategy callbacks, processes scheduled order arrivals/cancels, and drains pending internal events after historical feed exhaustion.
+- `LatencyAwareExecution` owns order lifecycle and fill generation.
+- `Portfolio` applies only newly generated `Fill` records.
+- Simulated orders, execution, passive fills, and cancels do not mutate the historical `OrderBook`.
 
-## Overflow strategy
-- Products such as `price_ticks * quantity`, doubled cash, inventory times doubled midpoint, realized gross PnL, unrealized gross PnL, fees, and turnover are calculated with `__int128` intermediates.
-- Conversion back to `AccountingAmount` or `AccountingAmountX2` is checked.
-- Overflow throws explicitly; no signed or unsigned wraparound is accepted.
-- Fill application works on a copy and commits only after validation and checked arithmetic complete.
+## Config format
+- Format: deterministic line-oriented `key=value`.
+- Blank lines and `#` comments are ignored.
+- Public example: `configs/example_config.kv`.
+- Required operational fields include book/trade input paths, output directory, price format, strategy type, latency, queue fraction, fee rate, and initial cash.
+- `strategy_type=queue_imbalance` uses the existing Queue Imbalance strategy.
+- `strategy_type=scripted` is available for deterministic golden/integration scenarios without altering the QI demo.
+- Canonical config serialization excludes input file paths and output paths; input content is identified by content hash.
 
-## Cash convention
-- Buy fill: `cash -= price_ticks * quantity`, then `cash -= fee`.
-- Sell fill: `cash += price_ticks * quantity`, then `cash -= fee`.
-- Starting cash is configurable; zero starting cash is allowed.
+## Artifact formats
+- `orders.csv`: deterministic order records sorted by `order_id`.
+- `fills.csv`: deterministic fill records in fill-sequence order.
+- `ledger.csv`: deterministic portfolio ledger after each fill.
+- `portfolio_summary.json`: fixed-order accounting summary, doubled-unit mark values, and mark availability.
+- `metrics.json`: fixed-order operational/execution counts only.
+- `run_manifest.json`: fixed-order engine version, input/config/artifact hashes, counts, final accounting values, final book hash, and run hash.
 
-## Inventory convention
-- Long inventory is positive.
-- Short inventory is negative.
-- Flat inventory is zero.
-- Aggregate signed inventory is derived from open lots.
+## Output overwrite policy
+- Successful runs write into a temporary output directory first.
+- Required artifacts are written before the final output directory is renamed into place.
+- Existing output directories containing run artifacts are refused unless `--force` is supplied.
+- Invalid output paths fail cleanly and do not produce a success manifest.
 
-## Lot-accounting method
-- FIFO lot accounting is authoritative for position cost basis.
-- Buy fills close existing short lots FIFO, then open a long lot for any remainder.
-- Sell fills close existing long lots FIFO, then open a short lot for any remainder.
-- Partial closes, complete closes, long-to-short flips, and short-to-long flips are tested.
+## Canonical hashing design
+- Hash algorithm: deterministic FNV-1a over explicit canonical text.
+- No `std::hash` is used for persistent run/artifact hashes.
+- Input hashes are file content hashes.
+- Canonical config hash excludes absolute path spelling and output directory.
+- Run hash is derived from engine version, input hash, config hash, final book hash, orders hash, fills hash, portfolio hash, and metrics hash.
+- Wall-clock generation timestamps are omitted.
+- Golden run hash: `8aca37583ca6f83a`.
 
-## Fee policy
-- Portfolio consumes the deterministic `fee_amount` already present on each `Fill`.
-- Portfolio does not recalculate fees with a separate model.
-- `total_fees` is tracked separately from gross realized and gross unrealized PnL.
+## Final mark behavior
+- Final mark uses Phase 9 policy.
+- Valid two-sided non-crossed final book: mark available.
+- Locked final book: mark available.
+- Empty, one-sided, or crossed final book with nonzero inventory: mark unavailable.
+- Flat portfolio with no midpoint still has cash-only equity.
+- Half-tick values are preserved in doubled accounting units.
 
-## Realized PnL definition
-- Realized gross PnL is before fees.
-- Long close: `(exit_sell_price_ticks - entry_buy_price_ticks) * matched_quantity`.
-- Short close: `(entry_sell_price_ticks - exit_buy_price_ticks) * matched_quantity`.
+## Golden E2E results
+- Historical events processed: 5
+- Book updates: 3
+- Trades: 2
+- Internal events: 3
+- Strategy intents: 2
+- Orders submitted: 2
+- Fills: 3
+- Ending inventory: 5
+- Ending cash: -50009
+- Realized gross PnL: 0
+- Unrealized gross PnL x2: 2
+- Total fees: 5
+- Ending equity x2: -8
+- Final book hash: `9ca1786003897355`
+- Run hash: `8aca37583ca6f83a`
 
-## Unrealized PnL definition
-- Gross unrealized PnL is derived from open lots and the current explicit market mark.
-- Long lot: `(mid_price_x2 - 2 * entry_price_ticks) * remaining_quantity`.
-- Short lot: `(2 * entry_price_ticks - mid_price_x2) * remaining_quantity`.
-- Values are represented exactly in doubled accounting units.
-
-## Mark policy
-- Marking uses the Phase 3 `OrderBook` best bid and best ask.
-- Empty and one-sided books do not provide a two-sided mark for nonzero inventory.
-- Locked books are markable.
-- Crossed books are treated conservatively as mark unavailable for nonzero inventory.
-- Flat portfolios can return cash-only equity even if the book mark is unavailable.
-
-## Half-tick representation
-- Midpoint is represented as `mid_price_x2 = best_bid_ticks + best_ask_ticks`.
-- Equity is represented as `equity_x2 = 2 * cash + inventory * mid_price_x2`.
-- Half-tick midpoint values are not truncated.
-
-## Turnover definition
-- Turnover is cumulative absolute traded notional.
-- For each fill: `turnover += price_ticks * quantity`.
-- Turnover is not divided by capital or equity in Phase 9.
-
-## Duplicate Fill policy
-- Portfolio records applied `fill_sequence_id` values.
-- Reapplying the same fill sequence id throws `std::invalid_argument`.
-- Duplicate fills do not mutate cash, inventory, lots, fees, realized gross PnL, turnover, fill count, or ledger state.
-
-## Accounting invariants
-- Only successfully applied `Fill` records mutate cash, inventory, lots, realized gross PnL, fees, turnover, fill count, and ledger state.
-- `OrderIntent`, order submission, pending state, acknowledgement, cancellation, rejection, `BookUpdateEvent`, and `TradeEvent` do not directly mutate portfolio economics.
-- For available marks: `equity_x2 == 2 * cash + inventory * mid_price_x2`.
-- When there are no external cash flows: `equity_x2 - 2 * initial_cash == net_total_pnl_x2`.
-- `net_total_pnl_x2 == 2 * realized_gross_pnl + unrealized_gross_pnl_x2 - 2 * total_fees`.
-
-## Deterministic result
-- A fixed fill sequence repeated 100 times produced identical cash, inventory, lots, realized gross PnL, fees, turnover, equity marks, and net total PnL marks.
-- Accounting depends on economic fill data, not on aggressive versus passive matching origin.
+## Determinism results
+- The integration test repeats identical config/input/output-overridden runs 100 times.
+- Repeated runs produce identical input hash, config hash, orders hash, fills hash, portfolio hash, final book hash, and run hash.
+- Running identical input/config into two different output directories preserves the same run hash.
+- Copying identical input content to different paths preserves input hashes and run hash when other canonical config semantics are unchanged.
+- Changing only latency changes config hash and run hash while preserving input hash.
+- Changing queue fraction changes config hash and run hash.
 
 ## Privacy/Git hygiene
 - `PROJECT_SPEC.md` remains local-only and ignored by `.gitignore`.
+- Generated artifact directories under `artifacts/` are ignored.
 - No private/local-only files are staged.
+- Public configs, fixtures, docs, and golden artifacts contain synthetic data only.
 - No absolute local-machine paths were found in public files.
-- No fixtures were added in Phase 9.
+- Run manifests do not include absolute input paths, output paths, local usernames, secrets, build directories, or wall-clock timestamps.
 
 ## Known limitations
 - `cmake` was not initially installed and was installed with Homebrew during Phase 0 verification.
@@ -146,13 +162,16 @@ Not started
 - Exchange-specific matching rules are not modeled.
 - Maker/taker fee differentiation is not modeled.
 - Accounting is single-instrument and consumes existing `Fill` records only.
+- The manifest records Git commit as `unavailable`; build-time Git metadata embedding is not implemented.
+- Strategy cancel intents are not a general public strategy API; Phase 10 uses an orchestrator cancel-after-arrival setting for the synthetic integration scenario.
+- Metrics are operational counts only; benchmark throughput and latency metrics are not implemented.
 - Portfolio does not enforce margin, leverage, capital constraints, risk limits, or multi-asset allocation.
 - Strategy performance statistics such as Sharpe, Sortino, volatility, alpha, beta, drawdown, win rate, and return series are not implemented.
 - Market impact, benchmarking, Python bindings, multithreading, and performance optimization are not implemented.
-- Phase 10 end-to-end CLI/artifact pipeline has not been started.
+- Phase 11 benchmark baseline has not been started.
 
 ## Next phase
-Phase 10 - End-to-End Replay CLI, Reports & Artifacts
+Phase 11 - Benchmark Baseline & Profiling
 
 ## Verification commands
 ```bash
@@ -160,13 +179,16 @@ $ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 Result: PASS - Debug build configured.
 
 $ cmake --build build
-Result: PASS - built market_replay, replay_cli, smoke_tests, domain_types_tests, market_feed_tests, order_book_tests, event_loop_tests, strategy_tests, execution_tests, latency_execution_tests, passive_limit_tests, and portfolio_tests.
+Result: PASS - built market_replay, replay_cli, smoke_tests, domain_types_tests, market_feed_tests, order_book_tests, event_loop_tests, strategy_tests, execution_tests, latency_execution_tests, passive_limit_tests, portfolio_tests, and replay_engine_tests.
 
 $ ctest --test-dir build --output-on-failure
-Result: PASS - 10/10 tests passed.
+Result: PASS - 17/17 tests passed.
 
 $ ./build/replay_cli --help
-Result: PASS - exited 0 and printed usage.
+Result: PASS - exited 0 and printed usage for --config, --output, --force, and --help.
+
+$ ./build/replay_cli --config configs/example_config.kv --output artifacts/example_run --force
+Result: PASS - exited 0, wrote required artifacts, final book hash `9ca1786003897355`, run hash `8aca37583ca6f83a`.
 
 $ cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON
 Result: PASS - sanitizer build configured.
@@ -175,7 +197,7 @@ $ cmake --build build-asan
 Result: PASS - built sanitizer targets.
 
 $ ctest --test-dir build-asan --output-on-failure
-Result: PASS - 10/10 tests passed under ASan/UBSan configuration.
+Result: PASS - 17/17 tests passed under ASan/UBSan configuration.
 
 $ cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 Result: PASS - Release build configured.
@@ -183,102 +205,40 @@ Result: PASS - Release build configured.
 $ cmake --build build-release
 Result: PASS - built Release targets.
 
-$ ./build/portfolio_tests
-Result: PASS - Phase 9 portfolio/accounting tests passed.
+$ ./build-release/replay_cli --config configs/example_config.kv --output artifacts/example_run_release --force
+Result: PASS - exited 0, final book hash `9ca1786003897355`, run hash `8aca37583ca6f83a`.
 
 $ git diff --check
 Result: PASS - no whitespace errors.
 
-$ rg "\b(double|float)\b" include/replay/portfolio.hpp src/portfolio.cpp tests/unit/portfolio_test.cpp docs/accounting.md
-Result: PASS - no floating-point canonical accounting state or tests found.
-
-$ rg "Sortino|volatility|alpha|beta|drawdown|win rate|return series|Sharpe|risk limits|margin|leverage|capital constraints|multi-asset|benchmark optimization|Python bindings|multithreading" include/replay/portfolio.hpp src/portfolio.cpp tests/unit/portfolio_test.cpp docs/accounting.md
-Result: PASS - matches only the documented non-goals in docs/accounting.md.
-
-$ rg "$(printf '\057Users\057\174\057private\057\174Local\040Documents')" -g '!PROJECT_SPEC.md' -g '!build/**' -g '!build-asan/**' -g '!build-release/**' -g '!.git/**'
+$ rg "$(printf '\057Users\057\174\057private\057\174Local\040Documents')" -g '!PROJECT_SPEC.md' -g '!build/**' -g '!build-asan/**' -g '!build-release/**' -g '!artifacts/**' -g '!.git/**'
 Result: PASS - no absolute local-machine paths found in public files.
 
-$ git check-ignore -v PROJECT_SPEC.md
-Result: PASS - `PROJECT_SPEC.md` is ignored by `.gitignore`.
+$ rg "events/sec|ns/event|p99|Sharpe|drawdown|alpha|win rate|annual return|HFT-grade|production exchange engine|exact FIFO|exact L3|profitable strategy|realistic fills" README.md docs include src apps tests configs CMakeLists.txt
+Result: PASS - matches are limitation/non-goal language only.
+
+$ git check-ignore -v PROJECT_SPEC.md artifacts/example_run/run_manifest.json artifacts/example_run_release/run_manifest.json
+Result: PASS - `PROJECT_SPEC.md` and generated artifact outputs are ignored.
+
+$ git status --short
+Result: PASS - only Phase 10 files are modified/untracked; no staged changes.
 
 $ git status --ignored --short
-Result: PASS - only Phase 9 source/docs/CMake/status files are modified or untracked; `PROJECT_SPEC.md` and build directories are ignored.
+Result: PASS - `PROJECT_SPEC.md`, generated artifacts, and build directories are ignored.
 ```
 
-## Phase 0 acceptance gate
-- clean configure: PASS
-- clean build: PASS
-- CTest passes: PASS
-- CLI `--help` works: PASS
-- sanitizer build works where supported: PASS
-- `STATUS.md` records exact commands/results: PASS
-
-## Phase 1 acceptance gate
-- no market price key uses `double`: PASS
-- event ordering has deterministic tests: PASS
-- conversion rules documented: PASS
-- all unit tests pass: PASS
-- sanitizer tests pass: PASS
-
-## Phase 2 acceptance gate
-- parser handles valid fixture: PASS
-- parser rejects malformed fixture: PASS
-- deterministic ordering confirmed: PASS
-- errors are actionable: PASS
-- no premature optimization: PASS
-
-## Phase 3 acceptance gate
-- all book operations correct: PASS
-- edge cases tested: PASS
-- golden replay passes: PASS
-- deterministic state hash stable: PASS
-- no negative quantities: PASS
-- sanitizer tests pass: PASS
-
-## Phase 4 acceptance gate
-- event loop is single-threaded: PASS
-- tie-breaking documented: PASS
-- internal events interleave correctly with market events: PASS
-- deterministic trace test passes: PASS
-- no later phase logic embedded prematurely: PASS
-
-## Phase 5 acceptance gate
-- strategy interface cleanly separated: PASS
-- QI demo works: PASS
-- no direct order-book mutation: PASS
-- no future-event access: PASS
-- strategy behavior unit tested: PASS
-
-## Phase 6 acceptance gate
-- market orders walk depth correctly: PASS
-- partial execution supported: PASS
-- fees deterministic: PASS
-- lifecycle transition table documented: PASS
-- fill invariants tested: PASS
-
-## Phase 7 acceptance gate
-- no execution uses stale decision-time book by accident: PASS
-- intervening events processed correctly: PASS
-- latency configuration works: PASS
-
-## Phase 8 acceptance gate
-- limit orders, cancel, partial fill, and passive queue approximation implemented: PASS
-- active simulated orders do not mutate historical `OrderBook`: PASS
-- same-timestamp race semantics preserved: PASS
-- passive fill conservation tested: PASS
-- all Phase 0-7 behavior preserved: PASS
-
-## Phase 9 acceptance gate
-- portfolio state mutates only from `Fill` records: PASS
-- cash, signed inventory, FIFO lots, realized gross PnL, gross unrealized PnL, total fees, equity, turnover, and fill count tracked: PASS
-- no `double`/`float` canonical accounting state: PASS
-- checked arithmetic with `__int128` intermediates implemented and tested: PASS
-- FIFO examples, partial closes, and position flips tested: PASS
-- fees remain separate from gross realized and gross unrealized PnL: PASS
-- half-tick mark representation tested: PASS
-- equity and net total PnL identities tested: PASS
-- empty, one-sided, locked, crossed, and flat mark policies tested: PASS
-- zero quantity, invalid values, duplicate fills, and overflow failures tested: PASS
-- execution-produced fills feed portfolio accounting: PASS
-- all Phase 0-8 tests continue to pass: PASS
-- Phase 10 not started: PASS
+## Phase 10 acceptance gate
+- complete CLI run succeeds: PASS
+- golden E2E test passes: PASS
+- deterministic artifacts produced: PASS
+- manifest contains required metadata: PASS
+- failure modes are clear: PASS
+- output overwrite policy tested: PASS
+- run hash repeatability tested: PASS
+- output path independence tested: PASS
+- input content hash independence from source path tested: PASS
+- final mark available/unavailable behavior tested: PASS
+- order/fill conservation tested: PASS
+- historical book immutability tested: PASS
+- all Phase 0-9 tests continue to pass: PASS
+- Phase 11 not started: PASS

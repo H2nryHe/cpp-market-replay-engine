@@ -1,0 +1,15 @@
+{
+  "initial_cash": 0,
+  "ending_cash": -50009,
+  "ending_inventory": 5,
+  "realized_gross_pnl": 0,
+  "unrealized_gross_pnl_x2": 2,
+  "total_fees": 5,
+  "net_total_pnl_x2": -8,
+  "turnover": 50004,
+  "fill_count": 3,
+  "ending_equity_x2": -8,
+  "equity_determinable": true,
+  "mark_available": true,
+  "final_mid_x2": 20002
+}

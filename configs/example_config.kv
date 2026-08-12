@@ -1,0 +1,18 @@
+# Synthetic Phase 10 end-to-end replay example.
+book_updates_path=tests/golden/e2e_book_updates.csv
+trades_path=tests/golden/e2e_trades.csv
+output_directory=artifacts/example_run
+tick_size=0.01
+price_format=ticks
+strategy_type=scripted
+scripted_intents=100:2:buy:market:3:;200:3:buy:limit:6:10000
+queue_imbalance_depth_levels=1
+queue_imbalance_buy_threshold=0.25
+queue_imbalance_sell_threshold=-0.25
+strategy_order_quantity=1
+strategy_order_type=market
+order_latency_ns=50
+cancel_after_arrival_ns=100
+queue_fraction_ppm=500000
+fee_rate_ppm=100
+initial_cash=0

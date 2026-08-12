@@ -1,0 +1,4 @@
+fill_sequence_id,order_id,timestamp_ns,side,price_ticks,quantity,fee,cash_after,inventory_after,realized_gross_pnl_after
+1,1,150,buy,10002,2,2,-20006,2,0
+2,2,300,buy,10000,2,2,-40008,4,0
+3,2,350,buy,10000,1,1,-50009,5,0

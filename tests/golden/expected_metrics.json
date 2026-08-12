@@ -1,0 +1,13 @@
+{
+  "market_events_processed": 5,
+  "book_updates_processed": 3,
+  "trades_processed": 2,
+  "internal_events_processed": 3,
+  "strategy_intents": 2,
+  "orders_submitted": 2,
+  "orders_filled": 0,
+  "orders_partially_filled": 0,
+  "orders_canceled": 2,
+  "orders_rejected": 0,
+  "fills": 3
+}

@@ -1,0 +1,3 @@
+timestamp_ns,sequence_id,price,quantity,aggressor_side
+300,4,10000,7,sell
+350,5,10000,1,sell

@@ -24,6 +24,7 @@ add_library(market_replay
   src/order.cpp
   src/order_book.cpp
   src/portfolio.cpp
+  src/replay_engine.cpp
   src/simulation_clock.cpp
   src/strategy.cpp
   strategies/queue_imbalance_strategy.cpp
@@ -181,4 +182,56 @@ if(BUILD_TESTING)
 
   add_test(NAME portfolio_tests COMMAND portfolio_tests)
   set_tests_properties(portfolio_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(replay_engine_tests
+    tests/integration/replay_engine_test.cpp
+  )
+
+  target_link_libraries(replay_engine_tests PRIVATE market_replay::market_replay)
+  replay_apply_warnings(replay_engine_tests)
+  replay_apply_sanitizers(replay_engine_tests)
+
+  add_test(NAME replay_engine_tests COMMAND replay_engine_tests)
+  set_tests_properties(replay_engine_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(NAME replay_cli_help COMMAND replay_cli --help)
+  set_tests_properties(replay_cli_help PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(NAME replay_cli_example
+    COMMAND replay_cli --config configs/example_config.kv --output build/ctest_example_run --force
+  )
+  set_tests_properties(replay_cli_example PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(NAME replay_cli_invalid_config
+    COMMAND replay_cli --config tests/golden/e2e_invalid_config.kv --output build/invalid_config_run --force
+  )
+  set_tests_properties(replay_cli_invalid_config PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    WILL_FAIL TRUE
+  )
+
+  add_test(NAME replay_cli_missing_input
+    COMMAND replay_cli --config tests/golden/e2e_missing_input_config.kv --output build/missing_input_run --force
+  )
+  set_tests_properties(replay_cli_missing_input PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    WILL_FAIL TRUE
+  )
+
+  add_test(NAME replay_cli_invalid_output
+    COMMAND replay_cli --config configs/example_config.kv --output tests/golden/e2e_book_updates.csv --force
+  )
+  set_tests_properties(replay_cli_invalid_output PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    WILL_FAIL TRUE
+  )
+
+  add_test(NAME replay_cli_output_exists_refuses
+    COMMAND replay_cli --config configs/example_config.kv --output build/ctest_example_run
+  )
+  set_tests_properties(replay_cli_output_exists_refuses PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    DEPENDS replay_cli_example
+    WILL_FAIL TRUE
+  )
 endif()
